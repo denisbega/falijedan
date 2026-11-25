@@ -46,6 +46,12 @@ export interface Providers {
   demo: boolean;
   /** 'sse' = stalni server sa realtime vezom; 'poll' = serverless (Vercel) */
   realtime?: 'sse' | 'poll';
+  /** Cloudflare Turnstile (zaštita registracije od botova), ako je uključen */
+  turnstileSiteKey?: string | null;
+  /** Potvrda emaila je obavezna (slanje emaila je podešeno) */
+  emailVerification?: boolean;
+  /** "Zaboravljena lozinka" je dostupna */
+  passwordReset?: boolean;
 }
 export async function getProviders(): Promise<Providers> {
   try {
@@ -57,7 +63,7 @@ export async function getProviders(): Promise<Providers> {
   return { google: false, apple: false, demo: false };
 }
 
-export const signUp = (input: { firstName: string; lastName: string; email: string; password: string }) => call('/api/auth/register', input);
+export const signUp = (input: { firstName: string; lastName: string; email: string; password: string; turnstileToken?: string }) => call('/api/auth/register', input);
 export const signIn = (email: string, password: string) => call('/api/auth/login', { email, password });
 export const signInDemo = () => call('/api/auth/demo');
 /** Google / Apple: preusmjerenje na OAuth (server vraća korisnika nazad u aplikaciju). */
@@ -70,6 +76,25 @@ export async function signOut() {
   } finally {
     store.setLoggedOut();
   }
+}
+
+/* ============================ EMAIL: POTVRDA I NOVA LOZINKA ============================ */
+
+export const verifyEmail = (token: string) => call<{ verified: boolean }>('/api/auth/verify', { token });
+export const resendVerification = () => call<{ sent: boolean; verified?: boolean }>('/api/auth/verify/resend');
+export const forgotPassword = (email: string) => call<{ sent: boolean }>('/api/auth/forgot', { email });
+export const resetPassword = (token: string, password: string) => call<{ userId: string }>('/api/auth/reset', { token, password });
+
+/* ============================ NALOG ============================ */
+
+/** Preuzimanje svih ličnih podataka (JSON fajl). */
+export function downloadMyData() {
+  window.location.href = '/api/account/export';
+}
+/** Trajno brisanje naloga (lozinka je obavezna za naloge sa lozinkom). */
+export async function deleteAccount(input: { password?: string; confirm: string }) {
+  await call('/api/account/delete', input);
+  store.setLoggedOut();
 }
 
 export const saveProfile = (input: {

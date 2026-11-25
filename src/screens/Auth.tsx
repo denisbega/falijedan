@@ -1,10 +1,73 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router';
 import { motion } from 'framer-motion';
-import { Apple, Lock, Mail, User, Zap } from 'lucide-react';
-import { getProviders, signIn, signInDemo, signInWithProvider, signUp, type Providers } from '../lib/api';
-import { GlassButton, GlassCard, GlassInput, GlassTabs } from '../components/ui';
+import { Apple, ArrowLeft, KeyRound, Lock, Mail, MailCheck, User, Zap } from 'lucide-react';
+import { forgotPassword, getProviders, signIn, signInDemo, signInWithProvider, signUp, type Providers } from '../lib/api';
+import { LIMITS } from '../lib/validation';
+import { GlassButton, GlassCard, GlassInput, GlassTabs, PasswordInput } from '../components/ui';
 import { FullLogo } from '../components/layout/Logo';
+
+/** Server vraća samo kod greške OAuth prijave — prikazujemo isključivo naše poruke (nema podmetanja teksta u URL). */
+const OAUTH_ERRORS: Record<string, string> = {
+  istekla: 'Prijava je istekla — pokušaj ponovo.',
+  neuspjela: 'Prijava nije uspjela. Pokušaj ponovo ili se prijavi emailom.',
+  'nije-podeseno': 'Ova vrsta prijave trenutno nije dostupna.',
+};
+
+/* ---------- Cloudflare Turnstile (opciono): zaštita registracije od botova ---------- */
+
+interface TurnstileApi {
+  render(el: HTMLElement, opts: Record<string, unknown>): string;
+  remove(id: string): void;
+}
+declare global {
+  interface Window {
+    turnstile?: TurnstileApi;
+  }
+}
+let turnstileScript: Promise<void> | null = null;
+function loadTurnstile(): Promise<void> {
+  turnstileScript ??= new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => {
+      turnstileScript = null;
+      reject(new Error('turnstile'));
+    };
+    document.head.appendChild(s);
+  });
+  return turnstileScript;
+}
+
+function Turnstile({ siteKey, onToken }: { siteKey: string; onToken: (token: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const cb = useRef(onToken);
+  cb.current = onToken;
+  useEffect(() => {
+    let id: string | undefined;
+    let cancelled = false;
+    loadTurnstile()
+      .then(() => {
+        if (cancelled || !ref.current || !window.turnstile) return;
+        id = window.turnstile.render(ref.current, {
+          sitekey: siteKey,
+          theme: 'dark',
+          language: 'hr',
+          callback: (t: string) => cb.current(t),
+          'expired-callback': () => cb.current(''),
+          'error-callback': () => cb.current(''),
+        });
+      })
+      .catch(() => cb.current(''));
+    return () => {
+      cancelled = true;
+      if (id) window.turnstile?.remove(id);
+    };
+  }, [siteKey]);
+  return <div ref={ref} className="flex min-h-16.25 justify-center" />;
+}
 
 function GoogleGlyph() {
   return (
@@ -24,8 +87,11 @@ export function Auth() {
   useEffect(() => {
     void getProviders().then(setProviders);
     const e = params.get('greska');
-    if (e) setErr(e);
+    if (e) setErr(OAUTH_ERRORS[e] ?? OAUTH_ERRORS.neuspjela);
   }, [params]);
+  const [captcha, setCaptcha] = useState('');
+  const [captchaKey, setCaptchaKey] = useState(0);
+  const siteKey = mode === 'register' ? providers?.turnstileSiteKey : null;
   const demo = async () => {
     setErr(null);
     setBusy(true);
@@ -39,15 +105,45 @@ export function Auth() {
   };
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
 
+  // Zaboravljena lozinka: link za novu lozinku na email
+  const [forgot, setForgot] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
+  const openForgot = () => {
+    setErr(null);
+    setForgotSent(false);
+    setForgot(true);
+  };
+  const sendReset = async (e: FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    setBusy(true);
+    try {
+      await forgotPassword(form.email);
+      setForgotSent(true);
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : 'Slanje nije uspjelo.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setErr(null);
     setBusy(true);
     try {
       if (mode === 'login') await signIn(form.email, form.password);
-      else await signUp(form);
+      else {
+        if (siteKey && !captcha) throw new Error('Potvrdi da nisi robot (polje ispod lozinke).');
+        await signUp(siteKey ? { ...form, turnstileToken: captcha } : form);
+      }
     } catch (ex) {
       setErr(ex instanceof Error ? ex.message : 'Prijava nije uspjela.');
+      if (siteKey) {
+        // Token se može iskoristiti samo jednom — nova provjera
+        setCaptcha('');
+        setCaptchaKey((k) => k + 1);
+      }
     } finally {
       setBusy(false);
     }
@@ -80,6 +176,50 @@ export function Auth() {
           </div>
 
           <GlassCard tone="high" className="rounded-hero p-6 md:p-8">
+            {forgot ? (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForgot(false);
+                    setErr(null);
+                  }}
+                  className="-ml-1 mb-5 inline-flex items-center gap-1.5 rounded-lg px-1 py-1 text-[13px] font-bold text-fj-text-2 hover:text-white">
+                  <ArrowLeft className="size-4" aria-hidden /> Nazad na prijavu
+                </button>
+                {forgotSent ? (
+                  <div className="text-center">
+                    <MailCheck className="mx-auto size-12 text-fj-green" aria-hidden />
+                    <h2 className="mt-4 text-[22px] font-extrabold">Provjeri email</h2>
+                    <p className="mt-2 text-[15px] leading-relaxed text-fj-text-2">
+                      Ako postoji nalog sa adresom <span className="font-bold text-white">{form.email.trim()}</span>, poslali smo link za novu lozinku. Link važi 30 minuta — provjeri i spam folder.
+                    </p>
+                  </div>
+                ) : (
+                  <form onSubmit={sendReset} className="grid grid-cols-1 gap-4" noValidate>
+                    <div className="flex items-center gap-3">
+                      <span className="grid size-11 place-items-center rounded-2xl bg-[rgba(32,196,90,0.14)] text-fj-green">
+                        <KeyRound className="size-5" aria-hidden />
+                      </span>
+                      <div>
+                        <h2 className="text-[20px] font-extrabold leading-tight">Zaboravljena lozinka</h2>
+                        <p className="text-[14px] text-fj-text-2">Poslaćemo ti link za novu lozinku.</p>
+                      </div>
+                    </div>
+                    <GlassInput label="Email" type="email" icon={Mail} value={form.email} onChange={set('email')} autoComplete="email" inputMode="email" placeholder="ime@email.com" maxLength={LIMITS.email.max} required />
+                    {err && (
+                      <p role="alert" className="rounded-[14px] border border-[rgba(240,96,90,0.4)] bg-[rgba(240,96,90,0.1)] px-4 py-3 text-[14px] font-semibold text-fj-error">
+                        {err}
+                      </p>
+                    )}
+                    <GlassButton type="submit" full loading={busy}>
+                      Pošalji link
+                    </GlassButton>
+                  </form>
+                )}
+              </div>
+            ) : (
+            <>
             <GlassTabs
               ariaLabel="Prijava ili registracija"
               value={mode}
@@ -123,21 +263,27 @@ export function Auth() {
             <form onSubmit={submit} className="grid grid-cols-1 gap-4" noValidate>
               {mode === 'register' && (
                 <div className="grid grid-cols-2 gap-3">
-                  <GlassInput label="Ime" icon={User} value={form.firstName} onChange={set('firstName')} autoComplete="given-name" required />
-                  <GlassInput label="Prezime" value={form.lastName} onChange={set('lastName')} autoComplete="family-name" required />
+                  <GlassInput label="Ime" icon={User} value={form.firstName} onChange={set('firstName')} autoComplete="given-name" maxLength={LIMITS.name.max} required />
+                  <GlassInput label="Prezime" value={form.lastName} onChange={set('lastName')} autoComplete="family-name" maxLength={LIMITS.name.max} required />
                 </div>
               )}
-              <GlassInput label="Email" type="email" icon={Mail} value={form.email} onChange={set('email')} autoComplete="email" inputMode="email" placeholder="ime@email.com" required />
-              <GlassInput
+              <GlassInput label="Email" type="email" icon={Mail} value={form.email} onChange={set('email')} autoComplete="email" inputMode="email" placeholder="ime@email.com" maxLength={LIMITS.email.max} required />
+              <PasswordInput
                 label="Lozinka"
-                type="password"
                 icon={Lock}
                 value={form.password}
                 onChange={set('password')}
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                placeholder={mode === 'register' ? 'Najmanje 6 znakova' : '••••••••'}
+                placeholder={mode === 'register' ? `Najmanje ${LIMITS.password.min} znakova` : '••••••••'}
+                maxLength={LIMITS.password.max}
                 required
               />
+              {mode === 'login' && providers?.passwordReset && (
+                <button type="button" onClick={openForgot} className="-mt-2 justify-self-end rounded-lg px-1 py-1 text-[13px] font-bold text-fj-green hover:underline">
+                  Zaboravljena lozinka?
+                </button>
+              )}
+              {siteKey && <Turnstile key={captchaKey} siteKey={siteKey} onToken={setCaptcha} />}
               {err && (
                 <p role="alert" className="rounded-[14px] border border-[rgba(240,96,90,0.4)] bg-[rgba(240,96,90,0.1)] px-4 py-3 text-[14px] font-semibold text-fj-error">
                   {err}
@@ -147,6 +293,8 @@ export function Auth() {
                 {mode === 'login' ? 'Prijavi se' : 'Napravi nalog'}
               </GlassButton>
             </form>
+            </>
+            )}
           </GlassCard>
 
           {providers?.demo && (

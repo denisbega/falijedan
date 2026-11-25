@@ -7,7 +7,8 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { initEngine, onChange, refreshDemoData, runJobs, shutdownStorage } from './engine.ts';
-import { handleApi, SECURITY_HEADERS } from './routes.ts';
+import { handleApi, sendJson } from './routes.ts';
+import { staticHeaders } from './headers.ts';
 import { broadcastSync } from './realtime.ts';
 import { purgeExpiredSessions } from './auth.ts';
 
@@ -24,24 +25,37 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
+const STATIC_HEADERS = staticHeaders({ https: config.cookieSecure, turnstile: !!config.turnstile.siteKey });
 
 function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
   if (!fs.existsSync(config.distDir)) {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('Frontend nije buildovan. U razvoju otvori http://localhost:5173 (npm run dev), ili pokreni npm run build.');
   }
-  const safe = path.normalize(decodeURIComponent(url.pathname)).replace(/^([/\\])+/, '');
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(url.pathname);
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('Neispravna adresa.');
+  }
+  const safe = path.normalize(decoded.replaceAll('\0', '')).replace(/^([/\\])+/, '');
   let file = path.join(config.distDir, safe);
-  if (!file.startsWith(config.distDir) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(config.distDir, 'index.html');
+  // Samo fajlovi unutar dist/ (path traversal) i bez skrivenih (.nešto); sve ostalo → index.html (SPA)
+  const inside = file.startsWith(config.distDir + path.sep);
+  const hidden = safe.split(/[/\\]/).some((part) => part.startsWith('.'));
+  if (!inside || hidden || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(config.distDir, 'index.html');
   const ext = path.extname(file);
   const immutable = file.includes(`${path.sep}assets${path.sep}`);
   res.writeHead(200, {
     'Content-Type': MIME[ext] ?? 'application/octet-stream',
     'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
-    ...SECURITY_HEADERS,
+    ...STATIC_HEADERS,
   });
   if (req.method === 'HEAD') return res.end();
-  fs.createReadStream(file).pipe(res);
+  fs.createReadStream(file)
+    .on('error', () => res.destroy())
+    .pipe(res);
 }
 
 try {
@@ -60,18 +74,31 @@ setInterval(() => purgeExpiredSessions().catch((e) => console.error('sesije:', e
 if (config.demo) setInterval(() => refreshDemoData().catch((e) => console.error('demo podaci:', e)), 30 * 60000).unref();
 
 const server = http.createServer((req, res) => {
-  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-  if (url.pathname.startsWith('/api/')) {
-    for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
-    void handleApi(req, res, url);
-    return;
+  // Nijedan zahtjev (loš URL, Host zaglavlje, %-kodiranje…) ne smije srušiti proces
+  try {
+    // Fiksna baza: Host zaglavlje šalje klijent, ne koristimo ga za parsiranje
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    if (url.pathname.startsWith('/api/')) {
+      handleApi(req, res, url).catch((e) => {
+        console.error('api:', e instanceof Error ? e.message : e);
+        if (!res.headersSent) sendJson(res, 500, { error: 'Greška na serveru. Pokušaj ponovo.' });
+        else res.end();
+      });
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405, { Allow: 'GET, HEAD' });
+      return res.end();
+    }
+    serveStatic(req, res, url);
+  } catch (e) {
+    console.error('zahtjev:', e instanceof Error ? e.message : e);
+    if (!res.headersSent) res.writeHead(400);
+    res.end();
   }
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    res.writeHead(405);
-    return res.end();
-  }
-  serveStatic(req, res, url);
 });
+server.headersTimeout = 20000;
+server.requestTimeout = 30000;
 server.keepAliveTimeout = 65000;
 
 server.listen(config.port, () => {

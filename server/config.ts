@@ -36,8 +36,30 @@ export const config = {
   publicUrl,
   dataDir: process.env.DATA_DIR ?? path.join(root, 'server', 'data'),
   distDir: path.join(root, 'dist'),
-  /** Demo režim: početni podaci (Bijeljina), demo nalog i simulirani igrači. Za pravo lansiranje: DEMO_MODE=false */
-  demo: bool(process.env.DEMO_MODE, true),
+  /**
+   * Demo režim: početni podaci (Bijeljina), demo nalog (javna lozinka) i simulirani igrači.
+   * Podrazumijevano uključen samo u razvoju; u produkciji (npm start, Vercel) mora se eksplicitno uključiti.
+   */
+  // Lokalno sa pravom (Postgres/Supabase) bazom demo je isključen — da lokalni server ne mijenja produkcijske podatke
+  demo: bool(process.env.DEMO_MODE, !isProd && !process.env.DATABASE_URL),
+  /** Iza vlastitog reverse proxyja (nginx, Render…): IP klijenta iz zadnjeg X-Forwarded-For hopa. */
+  trustProxy: bool(process.env.TRUST_PROXY, !!process.env.RENDER),
+  /**
+   * Slanje emaila (potvrda naloga, reset lozinke) preko HTTP API-ja — postavi JEDAN ključ:
+   * Brevo (besplatno 300/dan, radi i bez vlastite domene) ili Resend (besplatno 3000/mj, traži domenu).
+   * Bez ključa: u razvoju se linkovi ispisuju u konzolu, a potvrda emaila se ne traži.
+   */
+  email: {
+    brevoKey: process.env.BREVO_API_KEY ?? '',
+    resendKey: process.env.RESEND_API_KEY ?? '',
+    from: process.env.EMAIL_FROM ?? '',
+    fromName: process.env.EMAIL_FROM_NAME || 'FaliJedan',
+  },
+  /** Cloudflare Turnstile (opciono): zaštita registracije od botova */
+  turnstile: {
+    siteKey: process.env.TURNSTILE_SITE_KEY ?? '',
+    secretKey: process.env.TURNSTILE_SECRET_KEY ?? '',
+  },
   cookieSecure: publicUrl.startsWith('https://'),
   sessionDays: Number(process.env.SESSION_DAYS ?? 30),
   /** Postgres / Supabase. Ako DATABASE_URL nije postavljen, koristi se lokalni SQLite (dataDir). */
@@ -52,6 +74,8 @@ export const config = {
         ? 'disable'
         : 'require') as 'disable' | 'require' | 'verify',
     caFile: process.env.DATABASE_CA_FILE ?? '',
+    /** CA certifikat (PEM sadržaj) — za DATABASE_SSL=verify na Vercelu, gdje nema fajlova */
+    ca: (process.env.DATABASE_CA ?? '').replace(/\\n/g, '\n'),
     poolMax: Number(process.env.DATABASE_POOL_MAX ?? (serverless ? 3 : 5)),
   },
   google: {
@@ -65,6 +89,11 @@ export const config = {
     privateKey: (process.env.APPLE_PRIVATE_KEY ?? '').replace(/\\n/g, '\n'),
   },
 };
+
+/** Email je podešen (ključ + adresa pošiljaoca). */
+export const emailEnabled = !!((config.email.brevoKey || config.email.resendKey) && config.email.from);
+/** Potvrda emaila je obavezna za akcije koje utiču na druge (prijava na termin, termini, poruke, ocjene). */
+export const requireVerification = bool(process.env.REQUIRE_EMAIL_VERIFICATION, emailEnabled);
 
 export const providers = {
   google: !!(config.google.clientId && config.google.clientSecret),

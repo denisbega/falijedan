@@ -30,10 +30,13 @@ Kopiraj `.env.example` u `.env`. Najvažnije:
 | Varijabla | Opis |
 |---|---|
 | `PUBLIC_URL` | javna adresa (OAuth callback, `Secure` kolačići na https) |
-| `DEMO_MODE` | `true` = demo podaci (Bijeljina), demo nalog i simulirani igrači; **za pravo lansiranje `false`** |
+| `DEMO_MODE` | `true` = demo podaci (Bijeljina), demo nalog (javna lozinka) i simulirani igrači. Podrazumijevano uključen samo u razvoju, u produkciji isključen |
 | `DATABASE_URL` | Postgres/Supabase baza (vidi ispod). Ako nije postavljen → lokalni SQLite |
 | `DATABASE_PASSWORD` | lozinka baze, ako je ne želiš u URL-u (tada u URL-u ostaje `[YOUR-PASSWORD]`) |
 | `DATABASE_SCHEMA` / `DATABASE_SSL` / `DATABASE_POOL_MAX` | šema (`falijedan`), SSL (`require`), broj konekcija (`5`) |
+| `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` | opciono: Cloudflare Turnstile na registraciji (zaštita od botova) |
+| `TRUST_PROXY` | vlastiti server iza reverse proxyja: IP klijenta iz `X-Forwarded-For` |
+| `BREVO_API_KEY` ili `RESEND_API_KEY` + `EMAIL_FROM` | slanje emaila: potvrda naloga i nova lozinka (vidi „Email“) |
 | `DATA_DIR` | folder SQLite baze (podrazumijevano `server/data`) |
 | `GOOGLE_CLIENT_ID/SECRET` | uključuje „Nastavi sa Google“ (redirect URI: `{PUBLIC_URL}/api/auth/google/callback`) |
 | `APPLE_CLIENT_ID/TEAM_ID/KEY_ID/PRIVATE_KEY` | uključuje „Nastavi sa Apple“ (return URL: `{PUBLIC_URL}/api/auth/apple/callback`, mora https) |
@@ -83,6 +86,29 @@ Framework, build i install komanda su u `vercel.json` — u Vercel podešavanjim
 **Čist početak u produkciji:** ako je baza ranije napunjena demo podacima, u Supabase → SQL Editor pokreni `drop schema falijedan cascade;` — server pri sljedećem zahtjevu sam ponovo kreira tabele (prazne ako je `DEMO_MODE=false`).
 
 **Alternativa — stalni Node server** (VPS, Render, Railway…): `npm run build && npm start`; tada radi i SSE realtime.
+
+## Email (potvrda naloga, nova lozinka)
+
+Emailovi idu preko **Brevo** (besplatno 300/dan, radi i bez vlastite domene) ili **Resend** (besplatno 3.000/mj, traži domenu) — bez dodatnih biblioteka, preko HTTP API-ja.
+
+1. [brevo.com](https://www.brevo.com) → besplatan nalog → **Senders, Domains & Dedicated IPs → Senders → Add a sender** (adresa sa koje šalješ, potvrdi je klikom na link).
+2. **SMTP & API → API Keys → Generate a new API key**.
+3. Vercel → Settings → Environment Variables: `BREVO_API_KEY`, `EMAIL_FROM` (adresa iz koraka 1), opciono `EMAIL_FROM_NAME`. Redeploy.
+
+Bez vlastite domene Brevo pošiljaoca prepisuje u `…@brevosend.com` (Gmail/Yahoo zahtijevaju autentifikovanu domenu), pa email češće završi u spamu. Sa domenom (npr. `falijedan.ba`, ~10–20 €/god.) dodaj je u Brevo → Domains (DKIM/DMARC zapisi) ili pređi na Resend.
+
+Kad je email podešen: nova registracija dobija link za potvrdu (48 h); dok email nije potvrđen, korisnik ne može da se prijavljuje na termine, organizuje, šalje poruke ni ocjenjuje (vidi baner sa „Pošalji ponovo“). „Zaboravljena lozinka?“ šalje jednokratan link (30 min); nova lozinka odjavljuje sve druge uređaje. Bez podešenog emaila (lokalni razvoj) linkovi se ispisuju u konzoli servera.
+
+## Sigurnost
+
+- **Prijava:** lozinke scrypt (N=2^15, r=8, p=3 — OWASP), najmanje 8 znakova, česte lozinke odbijene; stari heševi se nadograđuju pri prijavi. Sesije: nasumični token (256 bit), u bazi samo SHA-256 heš; kolačić `__Host-fj_session` (HttpOnly, Secure, SameSite=Lax) na https; nova prijava ukida stari token; odjava i brisanje naloga ukidaju sesije odmah na svim instancama.
+- **Zaštita od zaključavanja:** browser u kojem se korisnik već prijavio dobija kolačić povjerljivog uređaja — limit od 10 pokušaja po nalogu važi samo za nove uređaje, pa napadač ne može zaključati vlasnika na njegovom telefonu; sa novog uređaja izlaz je „Zaboravljena lozinka?“.
+- **Ograničenja pokušaja (u bazi, važe za sve instance):** prijava 10/15 min po nalogu (novi uređaji) ili po povjerljivom uređaju i 30/15 min po IP-u, registracija 10/h po IP-u, termini 10/h, poruke 500/dan (+ 20/min po instanci), novi razgovori 30/dan… IP adrese i emailovi se u bazi čuvaju samo kao heš. Opciono Cloudflare Turnstile na registraciji (`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`).
+- **Validacija:** svaka ruta ima striktnu šemu (`src/lib/validation.ts`) — nepoznata polja, pogrešni tipovi, preduge vrijednosti, HTML, kontrolni znakovi, nemogući datumi i vrijednosti van opsega se odbijaju (400), ništa se ne skraćuje tiho. SQL ide isključivo kroz parametrizovane upite.
+- **CSRF:** POST samo kao `application/json` sa našeg sajta (Origin + Sec-Fetch-Site) uz SameSite kolačić; Google/Apple prijava je vezana za browser (state u kolačiću i bazi).
+- **Zaglavlja:** CSP (bez inline skripti), HSTS, X-Frame-Options/frame-ancestors, nosniff, COOP, Permissions-Policy — za Vercel i stalni server iz `server/headers.ts`.
+- **Privatnost:** drugi korisnici vide približnu lokaciju (~1 km), nikad email; ko je dao numeričku ocjenu ili prijavio izostanak je anoniman. Korisnik može preuzeti svoje podatke i obrisati nalog (Uredi profil → Nalog i privatnost). Kad je `DEMO_MODE` isključen, demo nalog ne radi, a demo podaci (Bijeljina) se automatski uklanjaju iz baze — podaci pravih korisnika ostaju.
+- **Baza:** šema `falijedan` nije izložena Supabase Data API-ju, RLS uključen bez polisa (pristup samo serveru); TLS prema bazi (`DATABASE_SSL=verify` + `DATABASE_CA` za punu provjeru certifikata).
 
 ## Arhitektura
 

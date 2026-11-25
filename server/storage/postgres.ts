@@ -9,11 +9,11 @@
  */
 import pg from 'pg';
 import type { DB } from '../../src/lib/types.ts';
-import { ORDER_BY, SPECS, assignRows, computeDiff, emptyState, fromRow, newEpoch, snapshotOf, type Kind, type Mutator, type Row, type Snapshot, type Spec, type StorageAdapter, type Value } from './schema.ts';
+import { ORDER_BY, SPECS, assignRows, computeDiff, emptyState, fromRow, newEpoch, snapshotOf, type Kind, type Mutator, type Row, type Snapshot, type Spec, type StorageAdapter, type TokenPurpose, type Value } from './schema.ts';
 
 const pgType: Record<Kind, string> = { text: 'TEXT', int: 'INTEGER', real: 'DOUBLE PRECISION', bool: 'BOOLEAN', json: 'JSONB' };
 /** Povećaj kad se promijeni struktura tabela (pokreće ponovno izvršavanje DDL-a). */
-const DDL_VERSION = '2';
+const DDL_VERSION = '4';
 
 type Queryable = Pick<pg.PoolClient, 'query'>;
 
@@ -92,6 +92,10 @@ export class PostgresStorage implements StorageAdapter {
       `CREATE INDEX IF NOT EXISTS auth_sessions_user ON ${this.t('auth_sessions')} (user_id)`,
       `CREATE TABLE IF NOT EXISTS ${this.t('identities')} (provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (provider, subject))`,
       `CREATE TABLE IF NOT EXISTS ${this.t('oauth_states')} (state TEXT PRIMARY KEY, provider TEXT NOT NULL, expires_at BIGINT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS ${this.t('rate_limits')} (key TEXT PRIMARY KEY, count INTEGER NOT NULL, reset_at BIGINT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS ${this.t('user_tokens')} (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, purpose TEXT NOT NULL, expires_at BIGINT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS user_tokens_user ON ${this.t('user_tokens')} (user_id, purpose)`,
+      `CREATE INDEX IF NOT EXISTS identities_user ON ${this.t('identities')} (user_id)`,
       // RLS bez polisa: Supabase anon/authenticated uloge nemaju pristup; naš server (vlasnik tabela) ima.
       `DO $$ DECLARE r record; BEGIN
          FOR r IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -241,9 +245,14 @@ export class PostgresStorage implements StorageAdapter {
     delete: async (tokenHash: string) => {
       await this.pool.query(`DELETE FROM ${this.t('auth_sessions')} WHERE token_hash = $1`, [tokenHash]);
     },
+    deleteForUser: async (userId: string) => {
+      await this.pool.query(`DELETE FROM ${this.t('auth_sessions')} WHERE user_id = $1`, [userId]);
+    },
     purgeExpired: async (nowIso: string) => {
       await this.pool.query(`DELETE FROM ${this.t('auth_sessions')} WHERE expires_at < $1`, [nowIso]);
       await this.pool.query(`DELETE FROM ${this.t('oauth_states')} WHERE expires_at < $1`, [Date.now()]);
+      await this.pool.query(`DELETE FROM ${this.t('rate_limits')} WHERE reset_at < $1`, [Date.now()]);
+      await this.pool.query(`DELETE FROM ${this.t('user_tokens')} WHERE expires_at < $1`, [Date.now()]);
     },
   };
 
@@ -258,6 +267,25 @@ export class PostgresStorage implements StorageAdapter {
         [provider, subject, userId, new Date().toISOString()],
       );
     },
+    deleteForUser: async (userId: string) => {
+      await this.pool.query(`DELETE FROM ${this.t('identities')} WHERE user_id = $1`, [userId]);
+    },
+  };
+
+  rateLimit = {
+    hit: async (key: string, windowMs: number) => {
+      const now = Date.now();
+      const t = this.t('rate_limits');
+      const res = await this.pool.query(
+        `INSERT INTO ${t} AS r (key, count, reset_at) VALUES ($1, 1, $2)
+         ON CONFLICT (key) DO UPDATE SET
+           count = CASE WHEN r.reset_at < $3 THEN 1 ELSE r.count + 1 END,
+           reset_at = CASE WHEN r.reset_at < $3 THEN EXCLUDED.reset_at ELSE r.reset_at END
+         RETURNING count`,
+        [key, now + windowMs, now],
+      );
+      return Number(res.rows[0].count);
+    },
   };
 
   oauthStates = {
@@ -268,6 +296,28 @@ export class PostgresStorage implements StorageAdapter {
       const res = await this.pool.query(`DELETE FROM ${this.t('oauth_states')} WHERE state = $1 RETURNING provider, expires_at`, [state]);
       const row = res.rows[0] as { provider: string; expires_at: string } | undefined;
       return row && Number(row.expires_at) >= Date.now() ? row.provider : null;
+    },
+  };
+
+  tokens = {
+    create: async (tokenHash: string, userId: string, purpose: TokenPurpose, expiresAt: number) => {
+      await this.pool.query(
+        `INSERT INTO ${this.t('user_tokens')} (token_hash, user_id, purpose, expires_at) VALUES ($1, $2, $3, $4) ON CONFLICT (token_hash) DO NOTHING`,
+        [tokenHash, userId, purpose, expiresAt],
+      );
+    },
+    find: async (tokenHash: string, purpose: TokenPurpose) => {
+      const res = await this.pool.query(`SELECT user_id FROM ${this.t('user_tokens')} WHERE token_hash = $1 AND purpose = $2 AND expires_at >= $3`, [tokenHash, purpose, Date.now()]);
+      return (res.rows[0] as { user_id: string } | undefined)?.user_id ?? null;
+    },
+    take: async (tokenHash: string, purpose: TokenPurpose) => {
+      const res = await this.pool.query(`DELETE FROM ${this.t('user_tokens')} WHERE token_hash = $1 AND purpose = $2 RETURNING user_id, expires_at`, [tokenHash, purpose]);
+      const row = res.rows[0] as { user_id: string; expires_at: string } | undefined;
+      return row && Number(row.expires_at) >= Date.now() ? row.user_id : null;
+    },
+    deleteForUser: async (userId: string, purpose?: TokenPurpose) => {
+      if (purpose) await this.pool.query(`DELETE FROM ${this.t('user_tokens')} WHERE user_id = $1 AND purpose = $2`, [userId, purpose]);
+      else await this.pool.query(`DELETE FROM ${this.t('user_tokens')} WHERE user_id = $1`, [userId]);
     },
   };
 

@@ -1,7 +1,8 @@
 import { Suspense, useEffect, useState } from 'react';
 import { Navigate, useLocation, useOutlet } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
-import { WifiOff } from 'lucide-react';
+import { MailWarning, WifiOff } from 'lucide-react';
+import { resendVerification } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { useLoadStatus, useMe, useMediaQuery, useOnline } from '../../lib/hooks';
 import { store } from '../../lib/store';
@@ -39,6 +40,45 @@ export function ServerDown() {
 
 /** Rute na kojima se na mobilnom krije donja navigacija (imaju svoj donji bar ili su fullscreen). */
 const HIDE_BOTTOM_NAV = [/^\/termin\//, /^\/organizuj/, /^\/poruke\/.+/];
+
+/** Podsjetnik da korisnik potvrdi email (kad je potvrda obavezna za prijave na termine, poruke…). */
+function VerifyEmailBanner({ email }: { email?: string }) {
+  const [state, setState] = useState<'idle' | 'sending' | 'sent'>('idle');
+  const [error, setError] = useState<string | null>(null);
+  const resend = async () => {
+    setState('sending');
+    setError(null);
+    try {
+      await resendVerification();
+      setState('sent');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Slanje nije uspjelo.');
+      setState('idle');
+    }
+  };
+  return (
+    <div role="status" className="mx-auto mt-3 flex max-w-[1100px] flex-col gap-2 px-5 sm:flex-row sm:items-center md:px-8">
+      <div className="flex flex-1 items-start gap-3 rounded-card border border-[rgba(232,176,74,0.35)] bg-[rgba(30,26,16,0.7)] px-4 py-3 backdrop-blur-xl">
+        <MailWarning className="mt-0.5 size-5 shrink-0 text-fj-warning" aria-hidden />
+        <div className="min-w-0 flex-1 text-[13px] leading-snug">
+          <p className="font-extrabold text-white">Potvrdi email adresu</p>
+          <p className="text-fj-text-2">
+            {state === 'sent' ? 'Poslali smo novi link' : 'Poslali smo link'} na <span className="font-bold text-white">{email}</span>. Do potvrde ne možeš da se prijavljuješ na termine niti šalješ poruke.
+            {error && <span className="mt-1 block font-semibold text-fj-error">{error}</span>}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={resend}
+          disabled={state !== 'idle'}
+          className="shrink-0 self-center rounded-full border border-white/15 px-3 py-1.5 text-[12px] font-extrabold text-white transition-colors hover:bg-white/[0.08] disabled:opacity-50"
+        >
+          {state === 'sending' ? 'Šaljem…' : state === 'sent' ? 'Poslano ✓' : 'Pošalji ponovo'}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function FrozenOutlet() {
   const o = useOutlet();
@@ -113,6 +153,7 @@ export function AppShell() {
             </motion.div>
           )}
         </AnimatePresence>
+        {me.needsVerification && <VerifyEmailBanner email={me.email} />}
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key={location.pathname}

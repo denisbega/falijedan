@@ -288,11 +288,31 @@ export interface StorageAdapter {
     create(row: AuthSessionRow): Promise<void>;
     find(tokenHash: string): Promise<{ userId: string; expiresAt: string } | null>;
     delete(tokenHash: string): Promise<void>;
+    /** Odjava sa svih uređaja (brisanje naloga, preuzimanje naloga preko Google/Apple prijave). */
+    deleteForUser(userId: string): Promise<void>;
     purgeExpired(nowIso: string): Promise<void>;
   };
   identities: {
     find(provider: string, subject: string): Promise<string | null>;
     upsert(provider: string, subject: string, userId: string): Promise<void>;
+    deleteForUser(userId: string): Promise<void>;
+  };
+  /**
+   * Brojač pokušaja u prozoru (atomski, u bazi — važi za sve instance servera).
+   * Vraća broj pokušaja u trenutnom prozoru, uključujući ovaj.
+   */
+  rateLimit: {
+    hit(key: string, windowMs: number): Promise<number>;
+  };
+  /**
+   * Tokeni korisnika (u bazi samo SHA-256 heš): potvrda emaila, reset lozinke, povjerljivi uređaj.
+   * take() je jednokratan (briše token); find() ne briše (uređaj).
+   */
+  tokens: {
+    create(tokenHash: string, userId: string, purpose: TokenPurpose, expiresAt: number): Promise<void>;
+    find(tokenHash: string, purpose: TokenPurpose): Promise<string | null>;
+    take(tokenHash: string, purpose: TokenPurpose): Promise<string | null>;
+    deleteForUser(userId: string, purpose?: TokenPurpose): Promise<void>;
   };
   /** Jednokratni OAuth "state" (u bazi, jer callback može stići na drugu instancu). */
   oauthStates: {
@@ -304,3 +324,5 @@ export interface StorageAdapter {
 }
 
 export const newEpoch = () => Math.random().toString(36).slice(2, 10);
+
+export type TokenPurpose = 'verify' | 'reset' | 'device';

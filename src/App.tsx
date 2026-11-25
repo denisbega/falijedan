@@ -16,6 +16,8 @@ import { Onboarding } from './screens/Onboarding';
 const CreateSession = lazy(() => import('./screens/CreateSession').then((m) => ({ default: m.CreateSession })));
 const Profile = lazy(() => import('./screens/Profile').then((m) => ({ default: m.Profile })));
 const EditProfile = lazy(() => import('./screens/EditProfile').then((m) => ({ default: m.EditProfile })));
+const VerifyEmail = lazy(() => import('./screens/AccountLinks').then((m) => ({ default: m.VerifyEmail })));
+const ResetPassword = lazy(() => import('./screens/AccountLinks').then((m) => ({ default: m.ResetPassword })));
 const MySessions = lazy(() => import('./screens/MySessions').then((m) => ({ default: m.MySessions })));
 const RateSession = lazy(() => import('./screens/RateSession').then((m) => ({ default: m.RateSession })));
 const Messages = lazy(() => import('./screens/Messages').then((m) => ({ default: m.Messages })));
@@ -110,6 +112,9 @@ export function App() {
                     </PublicOnly>
                   }
                 />
+                {/* Linkovi iz emaila — rade i prijavljenom i neprijavljenom korisniku */}
+                <Route path="/potvrda-emaila" element={<VerifyEmail />} />
+                <Route path="/nova-lozinka" element={<ResetPassword />} />
                 <Route
                   path="/dobrodosli"
                   element={

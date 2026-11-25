@@ -18,6 +18,12 @@ export function attachClient(req: IncomingMessage, res: ServerResponse, userId: 
     'X-Accel-Buffering': 'no',
   });
   res.write('retry: 3000\n\n');
+  // Najviše 5 otvorenih veza po korisniku (više tabova/uređaja) — najstarije se zatvaraju
+  const mine = [...clients].filter((c) => c.userId === userId);
+  for (const old of mine.slice(0, Math.max(0, mine.length - 4))) {
+    clients.delete(old);
+    old.res.end();
+  }
   const client: Client = { res, userId };
   clients.add(client);
   req.on('close', () => clients.delete(client));

@@ -19,7 +19,7 @@ export async function createStorage(): Promise<StorageAdapter> {
     password: config.database.password,
     schema: config.database.schema,
     ssl: config.database.ssl,
-    ca: config.database.caFile ? fs.readFileSync(config.database.caFile, 'utf8') : undefined,
+    ca: config.database.ca || (config.database.caFile ? fs.readFileSync(config.database.caFile, 'utf8') : undefined),
     poolMax: config.database.poolMax,
   });
   try {

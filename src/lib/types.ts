@@ -1,7 +1,8 @@
 export type SportId = 'mali-fudbal' | 'kosarka' | 'odbojka' | 'padel' | 'tenis' | 'rukomet';
 export type Level = 'pocetni' | 'srednji' | 'napredni';
 export type SessionStatus = 'open' | 'full' | 'cancelled' | 'finished';
-export type PlayerStatus = 'confirmed' | 'waitlist' | 'cancelled' | 'no_show';
+/** removed = organizator uklonio igrača (ne može se ponovo prijaviti na taj termin) */
+export type PlayerStatus = 'confirmed' | 'waitlist' | 'cancelled' | 'no_show' | 'removed';
 export type RatingKey = 'fairPlay' | 'teamwork' | 'punctuality' | 'skill' | 'fitness';
 
 export interface User {
@@ -19,6 +20,12 @@ export interface User {
   verified: boolean;
   onboarded: boolean;
   bio?: string;
+  /** Samo u snimku za samog korisnika: da li nalog ima lozinku (ne čuva se u bazi) */
+  hasPassword?: boolean;
+  /** Samo u snimku za samog korisnika: email još nije potvrđen, a potvrda je obavezna */
+  needsVerification?: boolean;
+  /** Samo u snimku: nalog je obrisan (prikazuje se kao "Obrisan korisnik") */
+  deleted?: boolean;
 }
 
 export interface PlayerSport {

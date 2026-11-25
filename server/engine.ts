@@ -8,8 +8,8 @@
  */
 import type { DB, User } from '../src/lib/types.ts';
 import { createSeed, DEMO_USER_ID, rebaseSeed, SEED_VERSION } from '../src/lib/seed.ts';
-import { runScheduledJobs } from '../src/lib/rules.ts';
-import { config } from './config.ts';
+import { hasDemoData, purgeDemoData, roundCoord, runScheduledJobs } from '../src/lib/rules.ts';
+import { config, requireVerification } from './config.ts';
 import { createStorage, type StorageAdapter } from './storage/index.ts';
 import { emptyState } from './storage/schema.ts';
 import { hashPassword } from './passwords.ts';
@@ -58,6 +58,11 @@ export function initEngine(): Promise<void> {
       await enqueue(reload);
       console.log(`› Baza: ${storage.label}`);
       if (config.demo) await refreshDemoData();
+      else if (hasDemoData(state)) {
+        // Prava aplikacija (DEMO_MODE isključen): demo korisnici i njihovi podaci se uklanjaju
+        const removed = await transact((d) => purgeDemoData(d));
+        console.log(`› Demo podaci uklonjeni (${removed.users} demo korisnika, ${removed.sessions} termina).`);
+      }
     })();
     // Serverless: ako start ne uspije (npr. baza nedostupna), sljedeći zahtjev pokušava ponovo
     initPromise.catch(() => {
@@ -117,25 +122,45 @@ export const findUserByEmail = (email: string): User | undefined => state.users.
 export const db = () => storage;
 export const shutdownStorage = () => storage?.close();
 
-/** Podaci koje korisnik smije vidjeti (bez tuđih emailova, lozinki, poruka i obavještenja). */
+const MESSAGES_PER_THREAD = 300;
+
+/**
+ * Podaci koje korisnik smije vidjeti:
+ * - bez tuđih emailova, lozinki/heševa, poruka iz tuđih razgovora i tuđih obavještenja;
+ * - tuđa lokacija samo približno (~1 km), nikad precizni GPS;
+ * - ko je koga ocijenio vidi se samo za javne recenzije (ocjena sa komentarom) i za vlastite ocjene —
+ *   numeričke ocjene i prijave izostanka su anonimne (bez osvete za lošu ocjenu).
+ */
 export function snapshotFor(userId: string): DB {
   const s = state;
   const threads = s.threads.filter((t) => t.memberIds.includes(userId));
   const tids = new Set(threads.map((t) => t.id));
+  const perThread = new Map<string, number>();
+  const messages = s.messages
+    .filter((m) => tids.has(m.threadId))
+    .reverse()
+    .filter((m) => {
+      const c = (perThread.get(m.threadId) ?? 0) + 1;
+      perThread.set(m.threadId, c);
+      return c <= MESSAGES_PER_THREAD;
+    })
+    .reverse();
   return {
     version: s.version,
     seededAt: s.seededAt,
     currentUserId: userId,
     users: s.users.map((u) => {
-      const { passwordHash: _ph, email, ...rest } = u;
-      return u.id === userId ? { ...rest, email } : rest;
+      const { passwordHash, email, ...rest } = u;
+      if (u.id === userId) return { ...rest, email, hasPassword: !!passwordHash, needsVerification: requireVerification && !u.verified };
+      const pub = { ...rest, lat: roundCoord(rest.lat), lng: roundCoord(rest.lng) };
+      return email ? pub : { ...pub, bio: undefined, deleted: true };
     }),
     playerSports: s.playerSports,
     sessions: s.sessions,
     sessionPlayers: s.sessionPlayers,
-    ratings: s.ratings,
+    ratings: s.ratings.map((r) => (r.fromUserId === userId || (r.comment && !r.noShow) ? r : { ...r, fromUserId: '' })),
     threads,
-    messages: s.messages.filter((m) => tids.has(m.threadId)),
+    messages,
     reads: Object.fromEntries(Object.entries(s.reads).filter(([k]) => k.endsWith(`:${userId}`) && tids.has(k.slice(0, k.lastIndexOf(':'))))),
     notifications: s.notifications.filter((n) => n.userId === userId).slice(0, 200),
   };

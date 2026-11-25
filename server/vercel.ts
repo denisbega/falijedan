@@ -8,7 +8,7 @@ import './serverless-env.ts'; // mora biti prvi import: uključuje serverless re
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { config } from './config.ts';
 import { initEngine, refreshDemoData, runJobs } from './engine.ts';
-import { handleApi, SECURITY_HEADERS, sendJson } from './routes.ts';
+import { handleApi, sendJson } from './routes.ts';
 import { purgeExpiredSessions } from './auth.ts';
 import { background } from './background.ts';
 
@@ -17,14 +17,18 @@ let lastPurge = 0;
 let lastDemo = Date.now();
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
-  const url = new URL(req.url ?? '/', `https://${req.headers.host ?? 'localhost'}`);
+  let url: URL;
+  try {
+    url = new URL(req.url ?? '/', 'https://localhost'); // fiksna baza — Host zaglavlje ne koristimo za parsiranje
+  } catch {
+    return sendJson(res, 400, { error: 'Neispravan zahtjev.' });
+  }
   // Vercel rewrite /api/(.*) → /api?__p=$1: vrati originalnu putanju
   const original = url.searchParams.get('__p');
   if (original != null) {
     url.pathname = `/api/${original}`;
     url.searchParams.delete('__p');
   }
-  for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
 
   try {
     await initEngine();

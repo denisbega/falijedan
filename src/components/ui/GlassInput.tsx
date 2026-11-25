@@ -1,5 +1,5 @@
-import { forwardRef, useId, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from 'react';
-import { MapPin, Search, X, type LucideIcon } from 'lucide-react';
+import { forwardRef, useId, useState, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from 'react';
+import { Eye, EyeOff, MapPin, Search, X, type LucideIcon } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '../../lib/utils';
 
@@ -49,6 +49,33 @@ export const GlassInput = forwardRef<HTMLInputElement, GlassInputProps>(function
         </p>
       ) : null}
     </div>
+  );
+});
+
+/** Polje za lozinku sa dugmetom "oko" — prikaži/sakrij lozinku. */
+export const PasswordInput = forwardRef<HTMLInputElement, Omit<GlassInputProps, 'type' | 'suffix'>>(function PasswordInput(props, ref) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <GlassInput
+      ref={ref}
+      {...props}
+      type={visible ? 'text' : 'password'}
+      autoCapitalize="off"
+      autoCorrect="off"
+      spellCheck={false}
+      suffix={
+        <button
+          type="button"
+          onClick={() => setVisible((v) => !v)}
+          aria-label={visible ? 'Sakrij lozinku' : 'Prikaži lozinku'}
+          aria-pressed={visible}
+          title={visible ? 'Sakrij lozinku' : 'Prikaži lozinku'}
+          className="-mr-2 grid size-10 shrink-0 place-items-center rounded-full text-fj-text-2 transition-colors hover:bg-white/[0.08] hover:text-white focus-visible:outline-2 focus-visible:outline-fj-green"
+        >
+          {visible ? <EyeOff className="size-[18px]" aria-hidden /> : <Eye className="size-[18px]" aria-hidden />}
+        </button>
+      }
+    />
   );
 });
 

@@ -3,7 +3,7 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { DB } from '../../src/lib/types.ts';
-import { ORDER_BY, SPECS, assignRows, computeDiff, emptyState, fromRow, newEpoch, snapshotOf, type Kind, type Mutator, type Row, type Snapshot, type StorageAdapter } from './schema.ts';
+import { ORDER_BY, SPECS, assignRows, computeDiff, emptyState, fromRow, newEpoch, snapshotOf, type Kind, type Mutator, type Row, type Snapshot, type StorageAdapter, type TokenPurpose } from './schema.ts';
 
 const sqlType: Record<Kind, string> = { text: 'TEXT', int: 'INTEGER', real: 'REAL', bool: 'INTEGER', json: 'TEXT' };
 
@@ -37,6 +37,9 @@ export class SqliteStorage implements StorageAdapter {
       CREATE INDEX IF NOT EXISTS auth_sessions_user ON auth_sessions (user_id);
       CREATE TABLE IF NOT EXISTS identities (provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (provider, subject));
       CREATE TABLE IF NOT EXISTS oauth_states (state TEXT PRIMARY KEY, provider TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS rate_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, reset_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS user_tokens (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, purpose TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS user_tokens_user ON user_tokens (user_id, purpose);
     `);
   }
 
@@ -109,9 +112,14 @@ export class SqliteStorage implements StorageAdapter {
     delete: async (tokenHash: string) => {
       this.db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(tokenHash);
     },
+    deleteForUser: async (userId: string) => {
+      this.db.prepare('DELETE FROM auth_sessions WHERE user_id = ?').run(userId);
+    },
     purgeExpired: async (nowIso: string) => {
       this.db.prepare('DELETE FROM auth_sessions WHERE expires_at < ?').run(nowIso);
       this.db.prepare('DELETE FROM oauth_states WHERE expires_at < ?').run(Date.now());
+      this.db.prepare('DELETE FROM rate_limits WHERE reset_at < ?').run(Date.now());
+      this.db.prepare('DELETE FROM user_tokens WHERE expires_at < ?').run(Date.now());
     },
   };
 
@@ -123,6 +131,25 @@ export class SqliteStorage implements StorageAdapter {
     upsert: async (provider: string, subject: string, userId: string) => {
       this.db.prepare('INSERT OR REPLACE INTO identities (provider, subject, user_id, created_at) VALUES (?, ?, ?, ?)').run(provider, subject, userId, new Date().toISOString());
     },
+    deleteForUser: async (userId: string) => {
+      this.db.prepare('DELETE FROM identities WHERE user_id = ?').run(userId);
+    },
+  };
+
+  rateLimit = {
+    hit: async (key: string, windowMs: number) => {
+      const now = Date.now();
+      const row = this.db
+        .prepare(
+          `INSERT INTO rate_limits (key, count, reset_at) VALUES (?, 1, ?)
+           ON CONFLICT (key) DO UPDATE SET
+             count = CASE WHEN rate_limits.reset_at < ? THEN 1 ELSE rate_limits.count + 1 END,
+             reset_at = CASE WHEN rate_limits.reset_at < ? THEN excluded.reset_at ELSE rate_limits.reset_at END
+           RETURNING count`,
+        )
+        .get(key, now + windowMs, now, now) as { count: number };
+      return row.count;
+    },
   };
 
   oauthStates = {
@@ -132,6 +159,24 @@ export class SqliteStorage implements StorageAdapter {
     take: async (state: string) => {
       const row = this.db.prepare('DELETE FROM oauth_states WHERE state = ? RETURNING provider, expires_at').get(state) as { provider: string; expires_at: number } | undefined;
       return row && row.expires_at >= Date.now() ? row.provider : null;
+    },
+  };
+
+  tokens = {
+    create: async (tokenHash: string, userId: string, purpose: TokenPurpose, expiresAt: number) => {
+      this.db.prepare('INSERT OR REPLACE INTO user_tokens (token_hash, user_id, purpose, expires_at) VALUES (?, ?, ?, ?)').run(tokenHash, userId, purpose, expiresAt);
+    },
+    find: async (tokenHash: string, purpose: TokenPurpose) => {
+      const row = this.db.prepare('SELECT user_id FROM user_tokens WHERE token_hash = ? AND purpose = ? AND expires_at >= ?').get(tokenHash, purpose, Date.now()) as { user_id: string } | undefined;
+      return row?.user_id ?? null;
+    },
+    take: async (tokenHash: string, purpose: TokenPurpose) => {
+      const row = this.db.prepare('DELETE FROM user_tokens WHERE token_hash = ? AND purpose = ? RETURNING user_id, expires_at').get(tokenHash, purpose) as { user_id: string; expires_at: number } | undefined;
+      return row && row.expires_at >= Date.now() ? row.user_id : null;
+    },
+    deleteForUser: async (userId: string, purpose?: TokenPurpose) => {
+      if (purpose) this.db.prepare('DELETE FROM user_tokens WHERE user_id = ? AND purpose = ?').run(userId, purpose);
+      else this.db.prepare('DELETE FROM user_tokens WHERE user_id = ?').run(userId);
     },
   };
 

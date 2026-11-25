@@ -7,14 +7,10 @@ import type { AppNotification, DB, Level, NotificationType, RatingKey, Session, 
 import { ANY_POSITION, CITIES, LEVELS, getSport, isSportId } from './sports.ts';
 import { fullName, igraci, relativeDay, timeHM, untilLabel } from './format.ts';
 import { haversineKm, uid } from './utils.ts';
+import { ApiError } from './errors.ts';
+import { BOT_USER_IDS, DEMO_USER_ID } from './seed.ts';
 
-export class ApiError extends Error {
-  status: number;
-  constructor(message: string, status = 400) {
-    super(message);
-    this.status = status;
-  }
-}
+export { ApiError };
 
 const nowIso = () => new Date().toISOString();
 const HOUR = 3600000;
@@ -50,6 +46,15 @@ function ensureThreadMember(d: DB, sessionId: string, userId: string) {
   const t = d.threads.find((x) => x.sessionId === sessionId);
   if (t && !t.memberIds.includes(userId)) t.memberIds.push(userId);
 }
+/** Ko napusti termin ili bude uklonjen, gubi pristup grupnom razgovoru termina. */
+function leaveThread(d: DB, sessionId: string, userId: string) {
+  const t = d.threads.find((x) => x.sessionId === sessionId);
+  if (t) t.memberIds = t.memberIds.filter((id) => id !== userId);
+}
+/** Koordinate korisnika čuvamo zaokružene na ~1 km (0,01°) — dovoljno za "u blizini", a ne otkriva adresu. */
+export const roundCoord = (v: number) => Math.round(v * 100) / 100;
+const MAX_ACTIVE_SESSIONS = 10;
+const RATING_WINDOW_MS = 14 * 86400000;
 
 function pickPosition(d: DB, s: Session, userId: string): string | undefined {
   const preferred = d.playerSports.find((p) => p.userId === userId && p.sport === s.sport)?.positions ?? [];
@@ -183,8 +188,8 @@ export function saveProfile(
   }
   if (input.city) me.city = input.city.trim().slice(0, 60);
   if (input.lat != null && input.lng != null && Math.abs(input.lat) <= 90 && Math.abs(input.lng) <= 180) {
-    me.lat = input.lat;
-    me.lng = input.lng;
+    me.lat = roundCoord(input.lat);
+    me.lng = roundCoord(input.lng);
   }
   if (input.radiusKm != null) me.radiusKm = Math.min(50, Math.max(1, Math.round(input.radiusKm)));
   if (input.completeOnboarding) {
@@ -201,6 +206,8 @@ export function joinSession(d: DB, actorId: string, sessionId: string, waitlist:
   assertJoinable(s);
   if (s.organizerId === me.id) throw new ApiError('Ti si organizator ovog termina.');
   if (activeRecord(d, s.id, me.id)) throw new ApiError('Već si prijavljen na ovaj termin.', 409);
+  if (d.sessionPlayers.some((p) => p.sessionId === s.id && p.userId === me.id && p.status === 'removed'))
+    throw new ApiError('Organizator te je uklonio iz ovog termina.', 403);
   const status = addPlayer(d, s, me.id, waitlist);
   return { status, missing: Math.max(0, missingOf(d, s)) };
 }
@@ -214,6 +221,7 @@ export function leaveSession(d: DB, actorId: string, sessionId: string) {
   if (Date.parse(s.startsAt) <= Date.now()) throw new ApiError('Termin je već počeo — odjava više nije moguća.', 409);
   const wasConfirmed = rec.status === 'confirmed';
   rec.status = 'cancelled';
+  leaveThread(d, s.id, me.id);
   if (wasConfirmed) {
     notify(d, s.organizerId, { type: 'player_left', title: `Odjava sa tvog termina: ${me.firstName}`, body: `${sessionLabel(s)} — oslobodilo se mjesto.`, link: `/termin/${s.id}` });
     afterSpotFreed(d, s);
@@ -254,6 +262,14 @@ export function createSession(d: DB, actorId: string, input: CreateSessionInput)
   const error = validateSessionInput(input);
   if (error) throw new ApiError(error);
   const me = requireUser(d, actorId);
+  const start = Date.parse(input.startsAt);
+  const end = start + input.durationMin * 60000;
+  const mine = d.sessions.filter((x) => x.organizerId === me.id && x.status !== 'cancelled' && endsAt(x) > Date.now());
+  if (mine.length >= MAX_ACTIVE_SESSIONS) throw new ApiError(`Možeš imati najviše ${MAX_ACTIVE_SESSIONS} aktivnih termina. Otkaži neki ili sačekaj da se odigra.`, 429);
+  // Duplikat (spam): isti sport, ista lokacija i vrijeme koje se preklapa. Različiti tereni u isto vrijeme su dozvoljeni.
+  const venueKey = input.venueName.trim().toLowerCase();
+  if (mine.some((x) => x.sport === input.sport && x.venueName.trim().toLowerCase() === venueKey && Date.parse(x.startsAt) < end && endsAt(x) > start))
+    throw new ApiError('Već imaš ovaj termin (isti sport i lokacija u to vrijeme).', 409);
   const id = uid('s');
   const createdAt = nowIso();
   const allowed = [...getSport(input.sport).positions, ANY_POSITION];
@@ -265,8 +281,8 @@ export function createSession(d: DB, actorId: string, input: CreateSessionInput)
     venueName: input.venueName.trim().slice(0, 80),
     address: input.address?.trim().slice(0, 120) || input.city || me.city,
     city: (input.city || me.city).slice(0, 60),
-    lat: input.lat ?? me.lat + 0.004,
-    lng: input.lng ?? me.lng + 0.004,
+    lat: input.lat ?? roundCoord(me.lat),
+    lng: input.lng ?? roundCoord(me.lng),
     startsAt: new Date(input.startsAt).toISOString(),
     durationMin: input.durationMin,
     totalPlayers: input.totalPlayers,
@@ -328,7 +344,8 @@ export function removePlayer(d: DB, actorId: string, sessionId: string, userId: 
   const rec = activeRecord(d, s.id, userId);
   if (!rec) throw new ApiError('Igrač nije u ekipi.');
   const wasConfirmed = rec.status === 'confirmed';
-  rec.status = 'cancelled';
+  rec.status = 'removed';
+  leaveThread(d, s.id, userId);
   notify(d, userId, { type: 'removed', title: 'Uklonjen si iz ekipe termina', body: `${sessionLabel(s)}.`, link: `/termin/${s.id}` });
   if (wasConfirmed) afterSpotFreed(d, s);
 }
@@ -347,6 +364,7 @@ export function submitRatings(d: DB, actorId: string, sessionId: string, entries
   const s = requireSession(d, sessionId);
   if (s.status === 'cancelled') throw new ApiError('Otkazani termini se ne ocjenjuju.');
   if (endsAt(s) > Date.now()) throw new ApiError('Ocjenjivanje je moguće tek nakon završetka termina.');
+  if (Date.now() - endsAt(s) > RATING_WINDOW_MS) throw new ApiError('Rok za ocjenjivanje ovog termina je istekao (14 dana).', 409);
   const myRec = d.sessionPlayers.find((p) => p.sessionId === s.id && p.userId === me.id && p.status === 'confirmed');
   if (!myRec) throw new ApiError('Ocjenjivati mogu samo igrači koji su bili na terminu.', 403);
   if (hasRated(d, s.id, me.id)) throw new ApiError('Saigrači su već ocijenjeni za ovaj termin.', 409);
@@ -446,6 +464,95 @@ export function markAllNotificationsRead(d: DB, actorId: string) {
   });
 }
 
+/* ============================ NALOG (privatnost) ============================ */
+
+/** Obrisan nalog: nema emaila (svi aktivni nalozi ga imaju). */
+export const isDeletedUser = (u: User) => !u.email;
+
+/**
+ * Brisanje naloga: lični podaci se brišu, budući termini se otkazuju/napuštaju, a nalog ostaje kao
+ * anonimni "Obrisan korisnik" (da poruke i ocjene drugih igrača ostanu smislene). Prijava više nije moguća.
+ */
+export function deleteAccount(d: DB, actorId: string) {
+  const me = requireUser(d, actorId);
+  const now = Date.now();
+  for (const s of d.sessions) {
+    if (s.organizerId !== me.id || s.status === 'cancelled' || Date.parse(s.startsAt) <= now) continue;
+    s.status = 'cancelled';
+    for (const p of d.sessionPlayers)
+      if (p.sessionId === s.id && p.userId !== me.id && (p.status === 'confirmed' || p.status === 'waitlist'))
+        notify(d, p.userId, { type: 'session_cancelled', title: 'Termin je otkazan', body: `${sessionLabel(s)} je otkazan.`, link: `/termin/${s.id}` });
+  }
+  for (const p of d.sessionPlayers) {
+    if (p.userId !== me.id || p.role === 'organizer' || (p.status !== 'confirmed' && p.status !== 'waitlist')) continue;
+    const s = d.sessions.find((x) => x.id === p.sessionId);
+    if (!s || s.status === 'cancelled' || Date.parse(s.startsAt) <= now) continue;
+    const wasConfirmed = p.status === 'confirmed';
+    p.status = 'cancelled';
+    if (wasConfirmed) afterSpotFreed(d, s);
+  }
+  for (const t of d.threads) if (t.kind === 'session') t.memberIds = t.memberIds.filter((id) => id !== me.id);
+  d.playerSports = d.playerSports.filter((p) => p.userId !== me.id);
+  d.notifications = d.notifications.filter((n) => n.userId !== me.id);
+  for (const k of Object.keys(d.reads)) if (k.endsWith(`:${me.id}`)) delete d.reads[k];
+  Object.assign(me, { firstName: 'Obrisan', lastName: 'korisnik', email: undefined, passwordHash: null, avatar: null, bio: undefined, city: '', lat: 0, lng: 0, radiusKm: 10, verified: false, onboarded: false });
+}
+
+/** Izvoz ličnih podataka (pravo na pristup podacima): sve što aplikacija čuva o korisniku. */
+export function exportUserData(d: DB, userId: string) {
+  const me = requireUser(d, userId);
+  const { passwordHash: _ph, ...profile } = me;
+  const myThreads = new Set(d.threads.filter((t) => t.memberIds.includes(userId)).map((t) => t.id));
+  return {
+    exportedAt: nowIso(),
+    profile,
+    sports: d.playerSports.filter((p) => p.userId === userId),
+    sessionsOrganized: d.sessions.filter((s) => s.organizerId === userId),
+    participation: d.sessionPlayers.filter((p) => p.userId === userId),
+    ratingsGiven: d.ratings.filter((r) => r.fromUserId === userId),
+    ratingsReceived: d.ratings.filter((r) => r.toUserId === userId).map(({ fromUserId: _f, ...r }) => r),
+    messagesSent: d.messages.filter((m) => m.fromUserId === userId && myThreads.has(m.threadId)),
+    notifications: d.notifications.filter((n) => n.userId === userId),
+  };
+}
+
+/* ============================ DEMO PODACI ============================ */
+
+/** Demo korisnik = fiksni demo ID (u-demo, u1…u20) I demo email (@falijedan.app) — pravi nalozi imaju ID "u_…". */
+const isDemoUser = (u: User) => (u.id === DEMO_USER_ID || BOT_USER_IDS.has(u.id)) && !!u.email?.endsWith('@falijedan.app');
+
+export const hasDemoData = (d: DB) => d.users.some(isDemoUser) || d.sessions.some((s) => s.seed);
+
+/**
+ * Uklanja demo podatke (Bijeljina) iz prave aplikacije: demo korisnike i sve vezano za njih (termine, ocjene,
+ * razgovore, poruke, obavještenja). Podaci pravih korisnika ostaju; njihovi termini u kojima su bili demo igrači
+ * se ponovo otvaraju za prijave.
+ */
+export function purgeDemoData(d: DB) {
+  const demoUsers = new Set(d.users.filter(isDemoUser).map((u) => u.id));
+  const goneSessions = new Set(d.sessions.filter((s) => s.seed || demoUsers.has(s.organizerId)).map((s) => s.id));
+  const goneThreads = new Set(
+    d.threads.filter((t) => t.seed || (t.sessionId && goneSessions.has(t.sessionId)) || (t.kind === 'direct' && t.memberIds.some((id) => demoUsers.has(id)))).map((t) => t.id),
+  );
+  d.users = d.users.filter((u) => !demoUsers.has(u.id));
+  d.playerSports = d.playerSports.filter((p) => !demoUsers.has(p.userId));
+  d.sessions = d.sessions.filter((s) => !goneSessions.has(s.id));
+  d.sessionPlayers = d.sessionPlayers.filter((p) => !goneSessions.has(p.sessionId) && !demoUsers.has(p.userId));
+  d.ratings = d.ratings.filter((r) => !r.seed && !goneSessions.has(r.sessionId) && !demoUsers.has(r.fromUserId) && !demoUsers.has(r.toUserId));
+  d.threads = d.threads.filter((t) => !goneThreads.has(t.id));
+  for (const t of d.threads) if (t.memberIds.some((id) => demoUsers.has(id))) t.memberIds = t.memberIds.filter((id) => !demoUsers.has(id));
+  d.messages = d.messages.filter((m) => !m.seed && !goneThreads.has(m.threadId) && !demoUsers.has(m.fromUserId));
+  const goneLink = (link?: string) => !!link && [...goneSessions].some((id) => link === `/termin/${id}` || link.startsWith(`/termin/${id}/`));
+  d.notifications = d.notifications.filter((n) => !n.seed && !demoUsers.has(n.userId) && !goneLink(n.link));
+  for (const k of Object.keys(d.reads)) {
+    const sep = k.lastIndexOf(':');
+    if (goneThreads.has(k.slice(0, sep)) || demoUsers.has(k.slice(sep + 1))) delete d.reads[k];
+  }
+  // Termini pravih korisnika koje su popunjavali demo igrači: ponovo otvoreni
+  for (const s of d.sessions) if (s.status === 'full' && missingOf(d, s) > 0) s.status = 'open';
+  return { users: demoUsers.size, sessions: goneSessions.size };
+}
+
 /** Zakazani posao (server, svake minute): podsjetnik 2h prije termina i poziv na ocjenjivanje — za sve korisnike. */
 export function runScheduledJobs(d: DB, now = Date.now()) {
   const sessions = new Map(d.sessions.map((s) => [s.id, s]));
@@ -476,4 +583,19 @@ export function runScheduledJobs(d: DB, now = Date.now()) {
       });
     }
   }
+  // Zadržavanje podataka: obavještenja starija od 90 dana (pročitana) i preko 300 po korisniku se brišu
+  const cutoff = now - 90 * 86400000;
+  const perUser = new Map<string, number>();
+  const kept = d.notifications.filter((n) => {
+    const c = (perUser.get(n.userId) ?? 0) + 1;
+    perUser.set(n.userId, c);
+    return c <= 300 && (!n.read || Date.parse(n.createdAt) > cutoff);
+  });
+  if (kept.length !== d.notifications.length) d.notifications = kept;
+  // Precizne (GPS) lokacije sačuvane prije zaokruživanja → ~1 km
+  for (const u of d.users)
+    if (u.lat !== roundCoord(u.lat) || u.lng !== roundCoord(u.lng)) {
+      u.lat = roundCoord(u.lat);
+      u.lng = roundCoord(u.lng);
+    }
 }
