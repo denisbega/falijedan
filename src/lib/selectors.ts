@@ -1,5 +1,5 @@
 /**
- * Izvedena polja — u produkciji ih računa server (SQL view-ovi u supabase/schema.sql).
+ * Izvedena polja — dijele ih server i klijent (računaju se iz stanja, ne čuvaju se u bazi).
  * missing = totalPlayers − potvrđeni; ocjena = prosjek svih kategorija; pouzdanost = dolasci / (dolasci + izostanci).
  */
 import type { CategoryScores, DB, Rating, RatingKey, Session, SessionPlayer, SessionView, SportId, TeamMember, User, UserStats } from './types.ts';

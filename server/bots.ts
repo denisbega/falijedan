@@ -21,11 +21,7 @@ const REPLIES = [
 export function afterSessionCreated(sessionId: string) {
   if (!config.demo) return;
   setTimeout(() => {
-    try {
-      transact((d) => botJoin(d, sessionId, BOT_USER_IDS));
-    } catch (e) {
-      console.warn('bot join:', e);
-    }
+    transact((d) => botJoin(d, sessionId, BOT_USER_IDS)).catch((e) => console.warn('bot join:', e));
   }, 9000);
 }
 
@@ -44,7 +40,7 @@ export function afterDirectMessage(threadId: string, memberIds: string[], sender
         sendTyping(threadId, bot, false, memberIds);
         transact((d) => {
           d.messages.push({ id: uid('m'), threadId, fromUserId: bot, text: REPLIES[Math.floor(Math.random() * REPLIES.length)], createdAt: new Date().toISOString() });
-        });
+        }).catch((e) => console.warn('bot reply:', e));
         pending.delete(threadId);
       }, 1900);
     }, 1200),

@@ -6,7 +6,7 @@ import { config, providers } from './config.ts';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { initEngine, onChange, refreshDemoData, transact } from './engine.ts';
+import { initEngine, onChange, refreshDemoData, shutdownStorage, transact } from './engine.ts';
 import { handleApi } from './routes.ts';
 import { broadcastSync } from './realtime.ts';
 import { purgeExpiredSessions } from './auth.ts';
@@ -51,21 +51,20 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, url: U
   fs.createReadStream(file).pipe(res);
 }
 
-await initEngine();
+try {
+  await initEngine();
+} catch (e) {
+  console.error(`\n✖ ${e instanceof Error ? e.message : String(e)}\n`);
+  process.exit(1);
+}
 onChange(broadcastSync);
 
 // Zakazani poslovi: podsjetnici (2h prije), pozivi na ocjenjivanje, čišćenje isteklih sesija
-const jobs = () => {
-  try {
-    transact((d) => runScheduledJobs(d, Date.now()));
-  } catch (e) {
-    console.error('scheduled jobs', e);
-  }
-};
-jobs();
+const jobs = () => transact((d) => runScheduledJobs(d, Date.now())).catch((e) => console.error('zakazani poslovi:', e));
+await jobs();
 setInterval(jobs, 60000).unref();
-setInterval(purgeExpiredSessions, 6 * 3600000).unref();
-if (config.demo) setInterval(refreshDemoData, 30 * 60000).unref();
+setInterval(() => purgeExpiredSessions().catch((e) => console.error('sesije:', e)), 6 * 3600000).unref();
+if (config.demo) setInterval(() => refreshDemoData().catch((e) => console.error('demo podaci:', e)), 30 * 60000).unref();
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
@@ -86,6 +85,10 @@ server.listen(config.port, () => {
   console.log(`› FaliJedan API radi na http://localhost:${config.port}  (demo: ${config.demo ? 'da' : 'ne'}, Google: ${providers.google ? 'da' : 'ne'}, Apple: ${providers.apple ? 'da' : 'ne'})`);
 });
 
-const shutdown = () => server.close(() => process.exit(0));
+const shutdown = () => {
+  server.close();
+  void Promise.resolve(shutdownStorage()).finally(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref();
+};
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

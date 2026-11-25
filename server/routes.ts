@@ -56,8 +56,8 @@ const strArr = (v: unknown, field: string, maxItems = 10): string[] => {
   return v.slice(0, maxItems).map((x) => str(x, field, 40));
 };
 
-function need(ctx: Ctx): string {
-  const id = currentUserId(ctx.req);
+async function need(ctx: Ctx): Promise<string> {
+  const id = await currentUserId(ctx.req);
   if (!id) throw new ApiError('Sesija je istekla — prijavi se ponovo.', 401);
   return id;
 }
@@ -79,10 +79,10 @@ on('POST', '/api/auth/register', async (ctx) => {
   const email = str(ctx.body.email, 'email', 120);
   if (findUserByEmail(email.trim())) throw new ApiError('Nalog sa ovim emailom već postoji. Prijavi se.', 409);
   const passwordHash = await hashPassword(password);
-  const userId = transact((d) =>
+  const userId = await transact((d) =>
     rules.createUser(d, { firstName: str(ctx.body.firstName, 'ime', 40), lastName: str(ctx.body.lastName, 'prezime', 40), email, passwordHash }),
   );
-  startSession(ctx.req, ctx.res, userId);
+  await startSession(ctx.req, ctx.res, userId);
   withSnapshot(ctx, userId, { userId }, 201);
 });
 
@@ -94,43 +94,43 @@ on('POST', '/api/auth/login', async (ctx) => {
   const user = findUserByEmail(email);
   const ok = await verifyPassword(password, user?.passwordHash);
   if (!user || !ok) throw new ApiError('Pogrešan email ili lozinka.', 401);
-  startSession(ctx.req, ctx.res, user.id);
+  await startSession(ctx.req, ctx.res, user.id);
   withSnapshot(ctx, user.id, { userId: user.id });
 });
 
-on('POST', '/api/auth/demo', (ctx) => {
+on('POST', '/api/auth/demo', async (ctx) => {
   if (!providers.demo || !findUser(DEMO_USER_ID)) throw new ApiError('Demo nalog nije dostupan.', 404);
   rateLimit(`auth:${ctx.ip}`, 30, 10 * 60000);
-  startSession(ctx.req, ctx.res, DEMO_USER_ID);
+  await startSession(ctx.req, ctx.res, DEMO_USER_ID);
   withSnapshot(ctx, DEMO_USER_ID, { userId: DEMO_USER_ID });
 });
 
-on('POST', '/api/auth/logout', (ctx) => {
-  endSession(ctx.req, ctx.res);
+on('POST', '/api/auth/logout', async (ctx) => {
+  await endSession(ctx.req, ctx.res);
   sendJson(ctx.res, 200, { result: null });
 });
 
-on('GET', '/api/auth/google', ({ res }) => {
+on('GET', '/api/auth/google', async ({ res }) => {
   if (!providers.google) return redirect(res, '/prijava?greska=' + encodeURIComponent('Google prijava nije podešena.'));
   redirect(res, googleAuthUrl());
 });
 on('GET', '/api/auth/google/callback', async (ctx) => {
   try {
     const userId = await googleCallback(ctx.url.searchParams);
-    startSession(ctx.req, ctx.res, userId);
+    await startSession(ctx.req, ctx.res, userId);
     redirect(ctx.res, '/');
   } catch (e) {
     redirect(ctx.res, '/prijava?greska=' + encodeURIComponent(e instanceof ApiError ? e.message : 'Google prijava nije uspjela.'));
   }
 });
-on('GET', '/api/auth/apple', ({ res }) => {
+on('GET', '/api/auth/apple', async ({ res }) => {
   if (!providers.apple) return redirect(res, '/prijava?greska=' + encodeURIComponent('Apple prijava nije podešena.'));
   redirect(res, appleAuthUrl());
 });
 on('POST', '/api/auth/apple/callback', async (ctx) => {
   try {
     const userId = await appleCallback(new URLSearchParams(ctx.body.__raw as string));
-    startSession(ctx.req, ctx.res, userId);
+    await startSession(ctx.req, ctx.res, userId);
     redirect(ctx.res, '/');
   } catch (e) {
     redirect(ctx.res, '/prijava?greska=' + encodeURIComponent(e instanceof ApiError ? e.message : 'Apple prijava nije uspjela.'));
@@ -138,8 +138,8 @@ on('POST', '/api/auth/apple/callback', async (ctx) => {
 });
 
 /* Podaci + realtime */
-on('GET', '/api/sync', (ctx) => {
-  const userId = need(ctx);
+on('GET', '/api/sync', async (ctx) => {
+  const userId = await need(ctx);
   const etag = etagFor(userId);
   if (ctx.req.headers['if-none-match'] === etag) {
     ctx.res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-store' });
@@ -148,21 +148,21 @@ on('GET', '/api/sync', (ctx) => {
   sendJson(ctx.res, 200, { db: snapshotFor(userId) }, { ETag: etag });
 });
 
-on('GET', '/api/events', (ctx) => {
-  const userId = need(ctx);
+on('GET', '/api/events', async (ctx) => {
+  const userId = await need(ctx);
   attachClient(ctx.req, ctx.res, userId);
 });
 
 /* Profil */
-on('POST', '/api/profile', (ctx) => {
-  const userId = need(ctx);
+on('POST', '/api/profile', async (ctx) => {
+  const userId = await need(ctx);
   const b = ctx.body;
   const sports = b.sports === undefined ? undefined : (Array.isArray(b.sports) ? b.sports.slice(0, 6) : []).map((s: Record<string, unknown>) => ({
     sport: str(s?.sport, 'sport', 20) as SportId,
     level: str(s?.level, 'nivo', 20) as Level,
     positions: strArr(s?.positions ?? [], 'pozicije', 8),
   }));
-  transact((d) =>
+  await transact((d) =>
     rules.saveProfile(d, userId, {
       firstName: optStr(b.firstName, 'ime', 40),
       lastName: optStr(b.lastName, 'prezime', 40),
@@ -179,8 +179,8 @@ on('POST', '/api/profile', (ctx) => {
 });
 
 /* Termini */
-on('POST', '/api/sessions', (ctx) => {
-  const userId = need(ctx);
+on('POST', '/api/sessions', async (ctx) => {
+  const userId = await need(ctx);
   rateLimit(`create:${userId}`, 10, 60 * 60000);
   const b = ctx.body;
   const input: rules.CreateSessionInput = {
@@ -198,32 +198,32 @@ on('POST', '/api/sessions', (ctx) => {
     level: str(b.level, 'nivo', 20) as Level,
     neededPositions: strArr(b.neededPositions ?? [], 'pozicije', 8),
   };
-  const result = transact((d) => rules.createSession(d, userId, input));
+  const result = await transact((d) => rules.createSession(d, userId, input));
   afterSessionCreated(result.id);
   withSnapshot(ctx, userId, result, 201);
 });
 
-on('POST', '/api/sessions/:id/join', (ctx) => {
-  const userId = need(ctx);
-  withSnapshot(ctx, userId, transact((d) => rules.joinSession(d, userId, ctx.params[0], ctx.body.waitlist === true)));
+on('POST', '/api/sessions/:id/join', async (ctx) => {
+  const userId = await need(ctx);
+  withSnapshot(ctx, userId, await transact((d) => rules.joinSession(d, userId, ctx.params[0], ctx.body.waitlist === true)));
 });
-on('POST', '/api/sessions/:id/leave', (ctx) => {
-  const userId = need(ctx);
-  transact((d) => rules.leaveSession(d, userId, ctx.params[0]));
+on('POST', '/api/sessions/:id/leave', async (ctx) => {
+  const userId = await need(ctx);
+  await transact((d) => rules.leaveSession(d, userId, ctx.params[0]));
   withSnapshot(ctx, userId, null);
 });
-on('POST', '/api/sessions/:id/cancel', (ctx) => {
-  const userId = need(ctx);
-  transact((d) => rules.cancelSession(d, userId, ctx.params[0]));
+on('POST', '/api/sessions/:id/cancel', async (ctx) => {
+  const userId = await need(ctx);
+  await transact((d) => rules.cancelSession(d, userId, ctx.params[0]));
   withSnapshot(ctx, userId, null);
 });
-on('POST', '/api/sessions/:id/remove', (ctx) => {
-  const userId = need(ctx);
-  transact((d) => rules.removePlayer(d, userId, ctx.params[0], str(ctx.body.userId, 'igrač', 60)));
+on('POST', '/api/sessions/:id/remove', async (ctx) => {
+  const userId = await need(ctx);
+  await transact((d) => rules.removePlayer(d, userId, ctx.params[0], str(ctx.body.userId, 'igrač', 60)));
   withSnapshot(ctx, userId, null);
 });
-on('POST', '/api/sessions/:id/ratings', (ctx) => {
-  const userId = need(ctx);
+on('POST', '/api/sessions/:id/ratings', async (ctx) => {
+  const userId = await need(ctx);
   if (!Array.isArray(ctx.body.entries)) throw bad('ocjene');
   const keys: RatingKey[] = ['fairPlay', 'teamwork', 'punctuality', 'skill', 'fitness'];
   const entries: rules.RatingEntry[] = ctx.body.entries.slice(0, 40).map((e: Record<string, unknown>) => {
@@ -235,43 +235,43 @@ on('POST', '/api/sessions/:id/ratings', (ctx) => {
       scores: Object.fromEntries(keys.map((k) => [k, e?.noShow === true ? 0 : int(scores[k], 'ocjena')])) as Record<RatingKey, number>,
     };
   });
-  transact((d) => rules.submitRatings(d, userId, ctx.params[0], entries));
+  await transact((d) => rules.submitRatings(d, userId, ctx.params[0], entries));
   withSnapshot(ctx, userId, null);
 });
-on('POST', '/api/sessions/:id/invite', (ctx) => {
-  const userId = need(ctx);
+on('POST', '/api/sessions/:id/invite', async (ctx) => {
+  const userId = await need(ctx);
   rateLimit(`invite:${userId}`, 40, 60 * 60000);
-  const threadId = transact((d) => rules.inviteToSession(d, userId, str(ctx.body.userId, 'igrač', 60), ctx.params[0]));
+  const threadId = await transact((d) => rules.inviteToSession(d, userId, str(ctx.body.userId, 'igrač', 60), ctx.params[0]));
   withSnapshot(ctx, userId, { threadId });
 });
 
 /* Poruke */
-on('POST', '/api/threads/direct', (ctx) => {
-  const userId = need(ctx);
-  withSnapshot(ctx, userId, { threadId: transact((d) => rules.openDirectThread(d, userId, str(ctx.body.userId, 'igrač', 60))) });
+on('POST', '/api/threads/direct', async (ctx) => {
+  const userId = await need(ctx);
+  withSnapshot(ctx, userId, { threadId: await transact((d) => rules.openDirectThread(d, userId, str(ctx.body.userId, 'igrač', 60))) });
 });
-on('POST', '/api/threads/:id/messages', (ctx) => {
-  const userId = need(ctx);
+on('POST', '/api/threads/:id/messages', async (ctx) => {
+  const userId = await need(ctx);
   rateLimit(`msg:${userId}`, 40, 60000);
-  const info = transact((d) => rules.sendMessage(d, userId, ctx.params[0], str(ctx.body.text, 'poruka', 1000), optStr(ctx.body.sessionId, 'termin', 60)));
+  const info = await transact((d) => rules.sendMessage(d, userId, ctx.params[0], str(ctx.body.text, 'poruka', 1000), optStr(ctx.body.sessionId, 'termin', 60)));
   if (info.kind === 'direct') afterDirectMessage(ctx.params[0], info.memberIds, userId);
   withSnapshot(ctx, userId, null);
 });
-on('POST', '/api/threads/:id/read', (ctx) => {
-  const userId = need(ctx);
-  transact((d) => rules.markThreadRead(d, userId, ctx.params[0]));
+on('POST', '/api/threads/:id/read', async (ctx) => {
+  const userId = await need(ctx);
+  await transact((d) => rules.markThreadRead(d, userId, ctx.params[0]));
   withSnapshot(ctx, userId, null);
 });
 
 /* Obavještenja */
-on('POST', '/api/notifications/read-all', (ctx) => {
-  const userId = need(ctx);
-  transact((d) => rules.markAllNotificationsRead(d, userId));
+on('POST', '/api/notifications/read-all', async (ctx) => {
+  const userId = await need(ctx);
+  await transact((d) => rules.markAllNotificationsRead(d, userId));
   withSnapshot(ctx, userId, null);
 });
-on('POST', '/api/notifications/:id/read', (ctx) => {
-  const userId = need(ctx);
-  transact((d) => rules.markNotificationRead(d, userId, ctx.params[0]));
+on('POST', '/api/notifications/:id/read', async (ctx) => {
+  const userId = await need(ctx);
+  await transact((d) => rules.markNotificationRead(d, userId, ctx.params[0]));
   withSnapshot(ctx, userId, null);
 });
 

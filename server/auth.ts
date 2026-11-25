@@ -5,7 +5,7 @@
 import crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { config } from './config.ts';
-import { findUser, sql, transact } from './engine.ts';
+import { db, findUser, transact } from './engine.ts';
 import { createUser, ApiError } from '../src/lib/rules.ts';
 
 const COOKIE = 'fj_session';
@@ -26,32 +26,49 @@ function cookieHeader(value: string, maxAgeSec: number) {
 
 /* ---------- Sesije ---------- */
 
-export function startSession(req: IncomingMessage, res: ServerResponse, userId: string) {
+/** Kratki keš sesija (da svaki zahtjev ne ide do baze, bitno kad je baza udaljena — Supabase). */
+const sessionCache = new Map<string, { userId: string; expiresAt: string; cachedAt: number }>();
+const CACHE_MS = 5 * 60000;
+
+export async function startSession(req: IncomingMessage, res: ServerResponse, userId: string) {
   const token = crypto.randomBytes(32).toString('base64url');
   const now = new Date();
   const expires = new Date(now.getTime() + config.sessionDays * 86400000);
-  sql()
-    .prepare('INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at, user_agent) VALUES (?, ?, ?, ?, ?)')
-    .run(sha(token), userId, now.toISOString(), expires.toISOString(), String(req.headers['user-agent'] ?? '').slice(0, 200));
+  await db().sessions.create({ tokenHash: sha(token), userId, createdAt: now.toISOString(), expiresAt: expires.toISOString(), userAgent: String(req.headers['user-agent'] ?? '').slice(0, 200) });
   res.setHeader('Set-Cookie', cookieHeader(token, config.sessionDays * 86400));
 }
 
-export function currentUserId(req: IncomingMessage): string | null {
+export async function currentUserId(req: IncomingMessage): Promise<string | null> {
   const token = parseCookies(req)[COOKIE];
   if (!token) return null;
-  const row = sql().prepare('SELECT user_id, expires_at FROM auth_sessions WHERE token_hash = ?').get(sha(token)) as { user_id: string; expires_at: string } | undefined;
-  if (!row || row.expires_at < new Date().toISOString()) return null;
-  return findUser(row.user_id) ? row.user_id : null;
+  const hash = sha(token);
+  let row = sessionCache.get(hash);
+  if (!row || Date.now() - row.cachedAt > CACHE_MS) {
+    const found = await db().sessions.find(hash);
+    if (!found) {
+      sessionCache.delete(hash);
+      return null;
+    }
+    row = { ...found, cachedAt: Date.now() };
+    sessionCache.set(hash, row);
+  }
+  if (row.expiresAt < new Date().toISOString()) return null;
+  return findUser(row.userId) ? row.userId : null;
 }
 
-export function endSession(req: IncomingMessage, res: ServerResponse) {
+export async function endSession(req: IncomingMessage, res: ServerResponse) {
   const token = parseCookies(req)[COOKIE];
-  if (token) sql().prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(sha(token));
+  if (token) {
+    sessionCache.delete(sha(token));
+    await db().sessions.delete(sha(token));
+  }
   res.setHeader('Set-Cookie', cookieHeader('', 0));
 }
 
-export function purgeExpiredSessions() {
-  sql().prepare('DELETE FROM auth_sessions WHERE expires_at < ?').run(new Date().toISOString());
+export async function purgeExpiredSessions() {
+  const now = new Date().toISOString();
+  for (const [k, v] of sessionCache) if (v.expiresAt < now || Date.now() - v.cachedAt > CACHE_MS) sessionCache.delete(k);
+  await db().sessions.purgeExpired(now);
 }
 
 /* ---------- Ograničenje pokušaja (brute force) ---------- */
@@ -164,17 +181,16 @@ export async function appleCallback(form: URLSearchParams) {
 }
 
 /** Pronalazi ili kreira korisnika za OAuth identitet (veže se i za postojeći nalog sa istim emailom). */
-function linkIdentity(provider: 'google' | 'apple', subject: string, email: string | undefined, first?: string, last?: string): string {
-  const db = sql();
-  const existing = db.prepare('SELECT user_id FROM identities WHERE provider = ? AND subject = ?').get(provider, subject) as { user_id: string } | undefined;
-  if (existing && findUser(existing.user_id)) return existing.user_id;
+async function linkIdentity(provider: 'google' | 'apple', subject: string, email: string | undefined, first?: string, last?: string): Promise<string> {
+  const existing = await db().identities.find(provider, subject);
+  if (existing && findUser(existing)) return existing;
   if (!email) throw new ApiError('Nalog nema email adresu.');
-  const userId = transact((d) => {
+  const userId = await transact((d) => {
     const byEmail = d.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
     if (byEmail) return byEmail.id;
     const fallback = email.split('@')[0].replace(/[._\d]+/g, ' ').trim() || 'Igrač';
     return createUser(d, { firstName: first || fallback, lastName: last || '', email, passwordHash: null, relaxed: true });
   });
-  db.prepare('INSERT OR REPLACE INTO identities (provider, subject, user_id, created_at) VALUES (?, ?, ?, ?)').run(provider, subject, userId, new Date().toISOString());
+  await db().identities.upsert(provider, subject, userId);
   return userId;
 }

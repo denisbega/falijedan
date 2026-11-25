@@ -10,13 +10,19 @@ try {
 }
 
 const bool = (v: string | undefined, def: boolean) => (v == null || v === '' ? def : /^(1|true|yes|on)$/i.test(v));
-const isProd = process.env.NODE_ENV === 'production';
+const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
 const port = Number(process.env.PORT ?? 8787);
 
 // Sva vremena u porukama/obavještenjima računamo u lokalnoj zoni korisnika (BiH)
 process.env.TZ = process.env.APP_TZ ?? 'Europe/Sarajevo';
 
-const publicUrl = (process.env.PUBLIC_URL ?? (isProd ? `http://localhost:${port}` : 'http://localhost:5173')).replace(/\/$/, '');
+// Javna adresa: PUBLIC_URL, ili adresa koju hosting sam postavi (Render, Railway), ili localhost.
+const publicUrl = (
+  process.env.PUBLIC_URL ||
+  process.env.RENDER_EXTERNAL_URL ||
+  (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '') ||
+  (isProd ? `http://localhost:${port}` : 'http://localhost:5173')
+).replace(/\/$/, '');
 
 export const config = {
   root,
@@ -29,6 +35,20 @@ export const config = {
   demo: bool(process.env.DEMO_MODE, true),
   cookieSecure: publicUrl.startsWith('https://'),
   sessionDays: Number(process.env.SESSION_DAYS ?? 30),
+  /** Postgres / Supabase. Ako DATABASE_URL nije postavljen, koristi se lokalni SQLite (dataDir). */
+  database: {
+    url: (process.env.DATABASE_URL ?? '').trim(),
+    /** Lozinka posebno (opciono) — tada u URL-u može ostati [YOUR-PASSWORD]; specijalni znakovi (@ # / %) ne lome URL. */
+    password: process.env.DATABASE_PASSWORD ?? '',
+    schema: process.env.DATABASE_SCHEMA ?? 'falijedan',
+    ssl: (['disable', 'require', 'verify'].includes(process.env.DATABASE_SSL ?? '')
+      ? process.env.DATABASE_SSL
+      : /[?&]sslmode=disable\b/.test(process.env.DATABASE_URL ?? '')
+        ? 'disable'
+        : 'require') as 'disable' | 'require' | 'verify',
+    caFile: process.env.DATABASE_CA_FILE ?? '',
+    poolMax: Number(process.env.DATABASE_POOL_MAX ?? 5),
+  },
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID ?? '',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',

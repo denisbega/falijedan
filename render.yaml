@@ -1,0 +1,25 @@
+# Render Blueprint — jedan Node servis služi aplikaciju (dist/) i API (/api), baza je Supabase.
+# Render → New → Blueprint → izaberi GitHub repo → upiši DATABASE_URL i DATABASE_PASSWORD → Deploy.
+services:
+  - type: web
+    name: falijedan
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      # Supabase → Connect → Session pooler (URI sa [YOUR-PASSWORD])
+      - key: DATABASE_URL
+        sync: false
+      # Lozinka baze iz Supabase-a
+      - key: DATABASE_PASSWORD
+        sync: false
+      - key: DEMO_MODE
+        value: "false"
+      - key: APP_TZ
+        value: Europe/Sarajevo
