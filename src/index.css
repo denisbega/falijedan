@@ -1,0 +1,321 @@
+@import "tailwindcss";
+
+/* ============================================================
+   FaliJedan — dizajn tokeni (jedini izvor istine za boje i stil)
+   ============================================================ */
+:root {
+  --fj-green: #20c45a;
+  --fj-green-2: #18a94f;
+  --fj-green-dark: #107c3b;
+  --fj-bg: #080a09;
+  --fj-bg-2: #101411;
+
+  --fj-glass-low: rgba(255, 255, 255, 0.035);
+  --fj-glass: rgba(255, 255, 255, 0.055);
+  --fj-glass-high: rgba(255, 255, 255, 0.085);
+  --fj-border: rgba(255, 255, 255, 0.12);
+  --fj-border-soft: rgba(255, 255, 255, 0.08);
+  --fj-border-strong: rgba(255, 255, 255, 0.18);
+
+  --fj-text: #ffffff;
+  --fj-text-2: #a1aaa4;
+  --fj-text-muted: #737d75;
+  --fj-on-green: #06140b;
+  --fj-warning: #e8b04a;
+  --fj-error: #f0605a;
+
+  --fj-green-tint: rgba(32, 196, 90, 0.14);
+  --fj-green-edge: rgba(32, 196, 90, 0.55);
+  --fj-green-glow: rgba(32, 196, 90, 0.4);
+
+  --fj-blur: blur(24px) saturate(140%);
+  --fj-shadow-glass: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 14px 34px rgba(0, 0, 0, 0.35);
+  --fj-shadow-high: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 24px 60px rgba(0, 0, 0, 0.45);
+  --fj-shadow-green: 0 10px 26px rgba(32, 196, 90, 0.4);
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@theme inline {
+  --font-sans: "Manrope", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-fj-green: var(--fj-green);
+  --color-fj-green-2: var(--fj-green-2);
+  --color-fj-green-dark: var(--fj-green-dark);
+  --color-fj-bg: var(--fj-bg);
+  --color-fj-bg-2: var(--fj-bg-2);
+  --color-fj-text: var(--fj-text);
+  --color-fj-text-2: var(--fj-text-2);
+  --color-fj-muted: var(--fj-text-muted);
+  --color-fj-on-green: var(--fj-on-green);
+  --color-fj-warning: var(--fj-warning);
+  --color-fj-error: var(--fj-error);
+
+  --radius-chip: 12px;
+  --radius-control: 16px;
+  --radius-card: 22px;
+  --radius-hero: 28px;
+}
+
+/* ---------- Staklo ---------- */
+@utility glass {
+  background: var(--fj-glass);
+  border: 1px solid var(--fj-border);
+  -webkit-backdrop-filter: var(--fj-blur);
+  backdrop-filter: var(--fj-blur);
+  box-shadow: var(--fj-shadow-glass);
+}
+@utility glass-low {
+  background: var(--fj-glass-low);
+  border: 1px solid var(--fj-border-soft);
+}
+@utility glass-high {
+  background: var(--fj-glass-high);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  -webkit-backdrop-filter: var(--fj-blur);
+  backdrop-filter: var(--fj-blur);
+  box-shadow: var(--fj-shadow-high);
+}
+@utility glass-bar {
+  background: rgba(16, 20, 17, 0.62);
+  border: 1px solid var(--fj-border);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  backdrop-filter: blur(28px) saturate(150%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 18px 44px rgba(0, 0, 0, 0.5);
+}
+
+/* Odabrano / aktivno */
+@utility is-selected {
+  background: var(--fj-green-tint);
+  border-color: var(--fj-green-edge);
+  color: var(--fj-green);
+}
+
+/* ---------- Tipografija ---------- */
+@utility label-caps {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  line-height: 1.3;
+}
+@utility num {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+@utility text-glow {
+  text-shadow: 0 0 28px rgba(32, 196, 90, 0.45);
+}
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Fallback kad backdrop-filter nije podržan */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass,
+  .glass-high,
+  .glass-bar {
+    background: rgba(20, 25, 22, 0.95);
+  }
+}
+
+@layer base {
+  html {
+    background: var(--fj-bg);
+    color: var(--fj-text);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    font-family: var(--font-sans);
+    background: var(--fj-bg);
+    min-height: 100dvh;
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overscroll-behavior-y: none;
+  }
+  button,
+  [role="button"] {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  :focus-visible {
+    outline: 2px solid var(--fj-green);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: rgba(32, 196, 90, 0.35);
+  }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+}
+
+/* ---------- Animacije ---------- */
+@keyframes fj-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(32, 196, 90, 0.6); }
+  70% { box-shadow: 0 0 0 7px rgba(32, 196, 90, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(32, 196, 90, 0); }
+}
+.pulse-dot {
+  animation: fj-pulse 1.9s ease-out infinite;
+}
+@keyframes fj-shimmer {
+  100% { transform: translateX(100%); }
+}
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.055), transparent);
+  animation: fj-shimmer 1.5s infinite;
+}
+@keyframes fj-typing {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+
+/* ---------- Range klizač ---------- */
+.fj-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 44px;
+  background: transparent;
+  --p: 50%;
+}
+.fj-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--fj-green-dark), var(--fj-green) var(--p), rgba(255, 255, 255, 0.12) var(--p));
+}
+.fj-range::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.fj-range::-moz-range-progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--fj-green);
+}
+.fj-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 24px;
+  height: 24px;
+  margin-top: -9px;
+  border-radius: 50%;
+  background: #fff;
+  border: 4px solid var(--fj-green);
+  box-shadow: 0 4px 14px rgba(32, 196, 90, 0.45);
+}
+.fj-range::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 4px solid var(--fj-green);
+}
+
+/* ---------- Mapa (Leaflet, tamni stil) ---------- */
+.leaflet-container {
+  background: #0b0e0c !important;
+  font-family: var(--font-sans) !important;
+  outline: none;
+}
+.leaflet-control-attribution {
+  background: rgba(8, 10, 9, 0.7) !important;
+  color: var(--fj-text-muted) !important;
+  font-size: 10px !important;
+  border-radius: 8px 0 0 0;
+}
+.leaflet-control-attribution a {
+  color: var(--fj-text-2) !important;
+}
+.leaflet-control-zoom {
+  border: 1px solid var(--fj-border) !important;
+  border-radius: 14px !important;
+  overflow: hidden;
+}
+.leaflet-control-zoom a {
+  background: rgba(16, 20, 17, 0.85) !important;
+  color: #fff !important;
+  border-color: var(--fj-border) !important;
+  width: 40px !important;
+  height: 40px !important;
+  line-height: 40px !important;
+}
+.fj-pin-wrap {
+  background: none !important;
+  border: none !important;
+}
+.fj-pin {
+  width: 40px;
+  height: 40px;
+  border-radius: 50% 50% 50% 4px;
+  transform: rotate(-45deg);
+  background: var(--fj-green);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 22px rgba(32, 196, 90, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  transition: transform 180ms ease;
+}
+.fj-pin span {
+  transform: rotate(45deg);
+  color: var(--fj-on-green);
+  font-weight: 800;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.fj-pin.is-full {
+  background: #2a302c;
+  border-color: rgba(255, 255, 255, 0.35);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
+}
+.fj-pin.is-full span {
+  color: var(--fj-text-2);
+}
+.fj-pin.is-active {
+  transform: rotate(-45deg) scale(1.18);
+  border-color: #fff;
+}
+.fj-me {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 4px solid var(--fj-green);
+  animation: fj-pulse 1.9s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

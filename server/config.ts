@@ -1,0 +1,48 @@
+import path from 'node:path';
+
+const root = path.resolve(import.meta.dirname, '..');
+
+// Učitaj .env ako postoji (Node 24 ima ugrađen parser)
+try {
+  process.loadEnvFile(path.join(root, '.env'));
+} catch {
+  /* .env nije obavezan */
+}
+
+const bool = (v: string | undefined, def: boolean) => (v == null || v === '' ? def : /^(1|true|yes|on)$/i.test(v));
+const isProd = process.env.NODE_ENV === 'production';
+const port = Number(process.env.PORT ?? 8787);
+
+// Sva vremena u porukama/obavještenjima računamo u lokalnoj zoni korisnika (BiH)
+process.env.TZ = process.env.APP_TZ ?? 'Europe/Sarajevo';
+
+const publicUrl = (process.env.PUBLIC_URL ?? (isProd ? `http://localhost:${port}` : 'http://localhost:5173')).replace(/\/$/, '');
+
+export const config = {
+  root,
+  isProd,
+  port,
+  publicUrl,
+  dataDir: process.env.DATA_DIR ?? path.join(root, 'server', 'data'),
+  distDir: path.join(root, 'dist'),
+  /** Demo režim: početni podaci (Bijeljina), demo nalog i simulirani igrači. Za pravo lansiranje: DEMO_MODE=false */
+  demo: bool(process.env.DEMO_MODE, true),
+  cookieSecure: publicUrl.startsWith('https://'),
+  sessionDays: Number(process.env.SESSION_DAYS ?? 30),
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID ?? '',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+  },
+  apple: {
+    clientId: process.env.APPLE_CLIENT_ID ?? '', // Services ID, npr. app.falijedan.web
+    teamId: process.env.APPLE_TEAM_ID ?? '',
+    keyId: process.env.APPLE_KEY_ID ?? '',
+    privateKey: (process.env.APPLE_PRIVATE_KEY ?? '').replace(/\\n/g, '\n'),
+  },
+};
+
+export const providers = {
+  google: !!(config.google.clientId && config.google.clientSecret),
+  apple: !!(config.apple.clientId && config.apple.teamId && config.apple.keyId && config.apple.privateKey),
+  demo: config.demo,
+};

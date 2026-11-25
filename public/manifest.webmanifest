@@ -1,0 +1,23 @@
+{
+  "name": "FaliJedan",
+  "short_name": "FaliJedan",
+  "description": "Rekreativni sportski termini — kad ekipi fali igrač.",
+  "lang": "sr-Latn",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#080A09",
+  "theme_color": "#080A09",
+  "categories": ["sports", "social", "lifestyle"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Organizuj termin", "url": "/organizuj", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Pronađi termin", "url": "/istrazi", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

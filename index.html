@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="sr-Latn">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#080A09" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="description" content="FaliJedan — rekreativni sportski termini. Kad ekipi fali igrač, objavi termin, a igrači iz blizine se prijave." />
+
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="FaliJedan" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="FaliJedan — fali vam igrač?" />
+    <meta property="og:description" content="Pronađi rekreativni termin u blizini ili igrače koji vam fale." />
+    <meta property="og:image" content="/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="preload" as="image" href="/brand/logo.png" />
+    <title>FaliJedan</title>
+
+    <style>
+      html, body { background: #080A09; margin: 0; }
+      #splash {
+        position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
+        background: radial-gradient(60% 45% at 50% 42%, rgba(32,196,90,0.18), rgba(32,196,90,0) 70%), #080A09;
+        transition: opacity 420ms ease, visibility 420ms ease;
+      }
+      #splash img { width: min(220px, 56vw); height: auto; animation: fj-splash 1.4s ease-in-out infinite alternate; }
+      #splash.is-hidden { opacity: 0; visibility: hidden; }
+      @keyframes fj-splash { from { transform: scale(0.985); opacity: 0.85; } to { transform: scale(1); opacity: 1; } }
+      @media (prefers-reduced-motion: reduce) { #splash img { animation: none; } #splash { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div id="splash" aria-hidden="true"><img src="/brand/logo.png" alt="" width="720" height="495" /></div>
+    <div id="root"></div>
+    <noscript>FaliJedan zahtijeva uključen JavaScript.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

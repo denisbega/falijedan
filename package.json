@@ -1,0 +1,39 @@
+{
+  "name": "falijedan",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite",
+    "dev:server": "node --watch --disable-warning=ExperimentalWarning server/index.ts",
+    "build": "tsc -b && vite build",
+    "start": "node --disable-warning=ExperimentalWarning server/index.ts",
+    "preview": "npm run build && npm start",
+    "typecheck": "tsc -b",
+    "db:reset": "node scripts/reset-db.mjs"
+  },
+  "dependencies": {
+    "framer-motion": "^14.14.0",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^1.80.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-leaflet": "^5.0.0",
+    "react-router": "^8.5.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/leaflet": "^1.9.23",
+    "@types/node": "^26.6.10",
+    "@types/react": "^19.3.1",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}
