@@ -1,7 +1,7 @@
 /** REST API. Sve mutacije vraćaju { result, db } — svjež snimak podataka za korisnika. */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { config, providers } from './config.ts';
-import { etagFor, findUser, findUserByEmail, read, snapshotFor, transact } from './engine.ts';
+import { ensureFresh, etagFor, findUser, findUserByEmail, read, snapshotFor, transact } from './engine.ts';
 import { appleAuthUrl, appleCallback, currentUserId, endSession, googleAuthUrl, googleCallback, rateLimit, startSession } from './auth.ts';
 import { hashPassword, verifyPassword } from './passwords.ts';
 import { attachClient } from './realtime.ts';
@@ -22,6 +22,13 @@ interface Ctx {
 type Handler = (ctx: Ctx) => Promise<void> | void;
 
 /* ---------- Odgovori ---------- */
+
+export const SECURITY_HEADERS: Record<string, string> = {
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'X-Frame-Options': 'DENY',
+  'Permissions-Policy': 'geolocation=(self), camera=(), microphone=()',
+};
 
 export function sendJson(res: ServerResponse, status: number, data: unknown, headers: Record<string, string> = {}) {
   const body = JSON.stringify(data);
@@ -70,7 +77,8 @@ const on = (method: string, pattern: string, h: Handler) => routes.push([method,
 on('GET', '/api/health', ({ res }) => sendJson(res, 200, { ok: true, users: read().users.length, time: new Date().toISOString() }));
 
 /* Auth */
-on('GET', '/api/auth/providers', ({ res }) => sendJson(res, 200, providers));
+// realtime: 'sse' (stalni server) ili 'poll' (serverless — klijent periodično provjerava /api/sync uz ETag)
+on('GET', '/api/auth/providers', ({ res }) => sendJson(res, 200, { ...providers, realtime: config.serverless ? 'poll' : 'sse' }));
 
 on('POST', '/api/auth/register', async (ctx) => {
   rateLimit(`auth:${ctx.ip}`, 20, 10 * 60000);
@@ -112,7 +120,7 @@ on('POST', '/api/auth/logout', async (ctx) => {
 
 on('GET', '/api/auth/google', async ({ res }) => {
   if (!providers.google) return redirect(res, '/prijava?greska=' + encodeURIComponent('Google prijava nije podešena.'));
-  redirect(res, googleAuthUrl());
+  redirect(res, await googleAuthUrl());
 });
 on('GET', '/api/auth/google/callback', async (ctx) => {
   try {
@@ -125,7 +133,7 @@ on('GET', '/api/auth/google/callback', async (ctx) => {
 });
 on('GET', '/api/auth/apple', async ({ res }) => {
   if (!providers.apple) return redirect(res, '/prijava?greska=' + encodeURIComponent('Apple prijava nije podešena.'));
-  redirect(res, appleAuthUrl());
+  redirect(res, await appleAuthUrl());
 });
 on('POST', '/api/auth/apple/callback', async (ctx) => {
   try {
@@ -149,6 +157,8 @@ on('GET', '/api/sync', async (ctx) => {
 });
 
 on('GET', '/api/events', async (ctx) => {
+  // Serverless funkcija ne smije držati otvorenu vezu; 204 = EventSource se ne spaja ponovo
+  if (config.serverless) return void ctx.res.writeHead(204).end();
   const userId = await need(ctx);
   attachClient(ctx.req, ctx.res, userId);
 });
@@ -295,6 +305,8 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, url: 
     const match = routes.find(([m, re]) => m === method && re.test(url.pathname));
     if (!match) throw new ApiError('Ruta ne postoji.', 404);
     const params = (url.pathname.match(match[1]) ?? []).slice(1).map(decodeURIComponent);
+    // Da li je druga instanca servera nešto promijenila (Vercel: više funkcija nad istom bazom)
+    await ensureFresh();
     let body: Record<string, unknown> = {};
     if (method === 'POST') {
       const isAppleCallback = url.pathname === '/api/auth/apple/callback';

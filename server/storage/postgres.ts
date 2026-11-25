@@ -2,12 +2,20 @@
  * Postgres baza — za Supabase (ili bilo koji Postgres). Aktivira se kad je postavljen DATABASE_URL.
  * Tabele se kreiraju automatski u zasebnoj šemi (podrazumijevano "falijedan"), koja NIJE izložena
  * Supabase Data API-ju; dodatno je uključen RLS bez polisa, pa im pristupa samo naš server.
+ *
+ * Radi i sa više instanci servera istovremeno (Vercel serverless funkcije): svaka izmjena ide pod
+ * globalnim zaključavanjem (pg_advisory_xact_lock), a revizija u tabeli meta govori instancama
+ * kad treba ponovo učitati stanje.
  */
 import pg from 'pg';
 import type { DB } from '../../src/lib/types.ts';
-import { ORDER_BY, SPECS, assignRows, computeDiff, emptyState, fromRow, snapshotOf, type Kind, type Row, type Snapshot, type Spec, type StorageAdapter, type Value } from './schema.ts';
+import { ORDER_BY, SPECS, assignRows, computeDiff, emptyState, fromRow, newEpoch, snapshotOf, type Kind, type Mutator, type Row, type Snapshot, type Spec, type StorageAdapter, type Value } from './schema.ts';
 
 const pgType: Record<Kind, string> = { text: 'TEXT', int: 'INTEGER', real: 'DOUBLE PRECISION', bool: 'BOOLEAN', json: 'JSONB' };
+/** Povećaj kad se promijeni struktura tabela (pokreće ponovno izvršavanje DDL-a). */
+const DDL_VERSION = '2';
+
+type Queryable = Pick<pg.PoolClient, 'query'>;
 
 export interface PostgresOptions {
   url: string;
@@ -24,6 +32,8 @@ export class PostgresStorage implements StorageAdapter {
   readonly host: string;
   private pool: pg.Pool;
   private prev: Snapshot = new Map();
+  private rev = 0;
+  private epoch = '';
   private s: string;
 
   constructor(opts: PostgresOptions) {
@@ -49,16 +59,28 @@ export class PostgresStorage implements StorageAdapter {
       max: opts.poolMax,
       ssl: opts.ssl === 'disable' ? false : opts.ssl === 'verify' ? { rejectUnauthorized: true, ca: opts.ca } : { rejectUnauthorized: false },
       connectionTimeoutMillis: 15000,
-      idleTimeoutMillis: 30000,
+      idleTimeoutMillis: 20000,
+      allowExitOnIdle: true,
     });
     this.pool.on('error', (e) => console.error('Postgres pool:', e.message));
+  }
+
+  get token() {
+    return `${this.epoch}.${this.rev}`;
   }
 
   private t(table: string) {
     return `"${this.s}"."${table}"`;
   }
 
+  /** Kreira šemu i tabele ako ne postoje (samo kad se promijeni DDL_VERSION — inače jedan brz upit). */
   async init() {
+    try {
+      const r = await this.pool.query(`SELECT value FROM ${this.t('meta')} WHERE key = 'ddl'`);
+      if (r.rows[0]?.value === DDL_VERSION) return;
+    } catch {
+      /* šema još ne postoji */
+    }
     const ddl: string[] = [`CREATE SCHEMA IF NOT EXISTS "${this.s}"`];
     for (const spec of SPECS) {
       ddl.push(`CREATE TABLE IF NOT EXISTS ${this.t(spec.table)} (${spec.cols.map((c) => `"${c.c}" ${pgType[c.k]}`).join(', ')}, PRIMARY KEY (${spec.pk.map((p) => `"${p}"`).join(', ')}))`);
@@ -69,41 +91,105 @@ export class PostgresStorage implements StorageAdapter {
       `CREATE TABLE IF NOT EXISTS ${this.t('auth_sessions')} (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, user_agent TEXT)`,
       `CREATE INDEX IF NOT EXISTS auth_sessions_user ON ${this.t('auth_sessions')} (user_id)`,
       `CREATE TABLE IF NOT EXISTS ${this.t('identities')} (provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (provider, subject))`,
+      `CREATE TABLE IF NOT EXISTS ${this.t('oauth_states')} (state TEXT PRIMARY KEY, provider TEXT NOT NULL, expires_at BIGINT NOT NULL)`,
+      // RLS bez polisa: Supabase anon/authenticated uloge nemaju pristup; naš server (vlasnik tabela) ima.
+      `DO $$ DECLARE r record; BEGIN
+         FOR r IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                  WHERE n.nspname = '${this.s}' AND c.relkind = 'r' AND NOT c.relrowsecurity LOOP
+           EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY', '${this.s}', r.relname);
+         END LOOP;
+       END $$`,
+      `INSERT INTO ${this.t('meta')} (key, value) VALUES ('ddl', '${DDL_VERSION}') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     );
-    // RLS bez polisa: Supabase anon/authenticated uloge nemaju pristup; naš server (vlasnik tabela) ima.
-    for (const table of [...SPECS.map((x) => x.table), 'meta', 'auth_sessions', 'identities']) ddl.push(`ALTER TABLE ${this.t(table)} ENABLE ROW LEVEL SECURITY`);
     const client = await this.pool.connect();
     try {
-      for (const q of ddl) await client.query(q);
+      // Zaključavanje: više instanci koje se pale istovremeno ne smiju paralelno kreirati iste objekte.
+      await client.query('BEGIN');
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext('falijedan:init:${this.s}'))`);
+      await client.query(ddl.join(';\n'));
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw e;
     } finally {
       client.release();
     }
   }
 
-  async load(): Promise<DB | null> {
-    const count = await this.pool.query(`SELECT COUNT(*)::int AS n FROM ${this.t('users')}`);
-    if (!count.rows[0].n) return null;
-    const metaRows = (await this.pool.query(`SELECT key, value FROM ${this.t('meta')}`)).rows as { key: string; value: string }[];
+  private async readToken(q: Queryable): Promise<{ rev: number; epoch: string }> {
+    const r = await q.query(`SELECT key, value FROM ${this.t('meta')} WHERE key IN ('rev', 'epoch')`);
+    const m = Object.fromEntries((r.rows as { key: string; value: string }[]).map((x) => [x.key, x.value]));
+    return { rev: Number(m.rev ?? 0), epoch: m.epoch ?? '' };
+  }
+
+  async revision(): Promise<string> {
+    try {
+      const { rev, epoch } = await this.readToken(this.pool);
+      return `${epoch}.${rev}`;
+    } catch (e) {
+      // Šema je obrisana dok server radi (npr. "drop schema falijedan cascade" za čist početak) → napravi je ponovo
+      if ((e as { code?: string }).code === '42P01' || (e as { code?: string }).code === '3F000') {
+        await this.init();
+        return 'reset';
+      }
+      throw e;
+    }
+  }
+
+  /** Učitava cijelo stanje (uz reviziju) iz jednog konzistentnog snimka baze. */
+  private async loadWith(q: Queryable): Promise<DB | null> {
+    const metaRows = (await q.query(`SELECT key, value FROM ${this.t('meta')}`)).rows as { key: string; value: string }[];
     const meta = Object.fromEntries(metaRows.map((r) => [r.key, r.value]));
+    this.rev = Number(meta.rev ?? 0);
+    this.epoch = meta.epoch ?? '';
+    const count = await q.query(`SELECT COUNT(*)::int AS n FROM ${this.t('users')}`);
+    if (!count.rows[0].n) {
+      this.prev = new Map();
+      return null;
+    }
     const db = emptyState(Number(meta.version ?? 0), Number(meta.seeded_at ?? Date.now()));
     for (const spec of SPECS) {
-      const res = await this.pool.query(`SELECT * FROM ${this.t(spec.table)}${ORDER_BY[spec.table] ?? ''}`);
+      const res = await q.query(`SELECT * FROM ${this.t(spec.table)}${ORDER_BY[spec.table] ?? ''}`);
       assignRows(db, spec, (res.rows as Row[]).map((r) => fromRow(spec, r)));
     }
     this.prev = snapshotOf(db);
     return db;
   }
 
+  async load(): Promise<DB | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const db = await this.loadWith(client);
+      await client.query('COMMIT');
+      return db;
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
   private pgValues(spec: Spec, vals: Value[]): unknown[] {
     return vals.map((v, i) => (spec.cols[i].k === 'bool' ? v === 1 : v));
   }
 
-  async persist(state: DB): Promise<boolean> {
-    const diff = computeDiff(this.prev, state);
-    if (diff.empty) return false;
+  async mutate<T>(current: DB | null, fn: Mutator<T>) {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      // Globalno zaključavanje izmjena — jedna po jedna, bez obzira na broj instanci servera.
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext('falijedan:write:${this.s}'))`);
+      const db = await this.readToken(client);
+      // Ako je neka druga instanca u međuvremenu nešto upisala, radimo nad svježim stanjem iz baze.
+      const base = current && db.rev === this.rev && db.epoch === this.epoch ? current : await this.loadWith(client);
+      const { next, result } = fn(base);
+      const diff = computeDiff(this.prev, next);
+      if (diff.empty) {
+        await client.query('COMMIT');
+        return { next, result, changed: false };
+      }
       for (const [spec, rows] of diff.upserts) {
         const cols = spec.cols.map((c) => `"${c.c}"`);
         const updates = spec.cols.filter((c) => !spec.pk.includes(c.c)).map((c) => `"${c.c}" = EXCLUDED."${c.c}"`);
@@ -124,16 +210,23 @@ export class PostgresStorage implements StorageAdapter {
       }
       for (const [spec, keys] of diff.deletes)
         for (const key of keys) await client.query(`DELETE FROM ${this.t(spec.table)} WHERE ${spec.pk.map((p, i) => `"${p}" = $${i + 1}`).join(' AND ')}`, key);
-      await client.query(`INSERT INTO ${this.t('meta')} (key, value) VALUES ('version', $1), ('seeded_at', $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [String(state.version), String(state.seededAt)]);
+      const rev = this.rev + 1;
+      const epoch = this.epoch || newEpoch();
+      await client.query(
+        `INSERT INTO ${this.t('meta')} (key, value) VALUES ('version', $1), ('seeded_at', $2), ('rev', $3), ('epoch', $4) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [String(next.version), String(next.seededAt), String(rev), epoch],
+      );
       await client.query('COMMIT');
+      this.prev = diff.next;
+      this.rev = rev;
+      this.epoch = epoch;
+      return { next, result, changed: true };
     } catch (e) {
       await client.query('ROLLBACK').catch(() => undefined);
       throw e;
     } finally {
       client.release();
     }
-    this.prev = diff.next;
-    return true;
   }
 
   sessions = {
@@ -150,6 +243,7 @@ export class PostgresStorage implements StorageAdapter {
     },
     purgeExpired: async (nowIso: string) => {
       await this.pool.query(`DELETE FROM ${this.t('auth_sessions')} WHERE expires_at < $1`, [nowIso]);
+      await this.pool.query(`DELETE FROM ${this.t('oauth_states')} WHERE expires_at < $1`, [Date.now()]);
     },
   };
 
@@ -163,6 +257,17 @@ export class PostgresStorage implements StorageAdapter {
         `INSERT INTO ${this.t('identities')} (provider, subject, user_id, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT (provider, subject) DO UPDATE SET user_id = EXCLUDED.user_id`,
         [provider, subject, userId, new Date().toISOString()],
       );
+    },
+  };
+
+  oauthStates = {
+    create: async (state: string, provider: string, expiresAt: number) => {
+      await this.pool.query(`INSERT INTO ${this.t('oauth_states')} (state, provider, expires_at) VALUES ($1, $2, $3) ON CONFLICT (state) DO NOTHING`, [state, provider, expiresAt]);
+    },
+    take: async (state: string) => {
+      const res = await this.pool.query(`DELETE FROM ${this.t('oauth_states')} WHERE state = $1 RETURNING provider, expires_at`, [state]);
+      const row = res.rows[0] as { provider: string; expires_at: string } | undefined;
+      return row && Number(row.expires_at) >= Date.now() ? row.provider : null;
     },
   };
 

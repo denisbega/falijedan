@@ -5,6 +5,7 @@
 import { config } from './config.ts';
 import { transact } from './engine.ts';
 import { sendTyping } from './realtime.ts';
+import { background, sleep } from './background.ts';
 import { botJoin } from '../src/lib/rules.ts';
 import { BOT_USER_IDS } from '../src/lib/seed.ts';
 import { uid } from '../src/lib/utils.ts';
@@ -20,29 +21,37 @@ const REPLIES = [
 
 export function afterSessionCreated(sessionId: string) {
   if (!config.demo) return;
-  setTimeout(() => {
-    transact((d) => botJoin(d, sessionId, BOT_USER_IDS)).catch((e) => console.warn('bot join:', e));
-  }, 9000);
+  background(
+    (async () => {
+      await sleep(9000);
+      await transact((d) => botJoin(d, sessionId, BOT_USER_IDS));
+    })(),
+  );
 }
 
-const pending = new Map<string, NodeJS.Timeout>();
+/** Po razgovoru samo jedan odgovor na niz poruka: nova poruka poništava odgovor koji još čeka. */
+const pending = new Map<string, { cancelled: boolean }>();
 
 export function afterDirectMessage(threadId: string, memberIds: string[], senderId: string) {
   if (!config.demo) return;
   const bot = memberIds.find((id) => id !== senderId && BOT_USER_IDS.has(id));
   if (!bot) return;
-  clearTimeout(pending.get(threadId));
-  pending.set(
-    threadId,
-    setTimeout(() => {
+  const prev = pending.get(threadId);
+  if (prev) prev.cancelled = true;
+  const job = { cancelled: false };
+  pending.set(threadId, job);
+  background(
+    (async () => {
+      await sleep(1200);
+      if (job.cancelled) return;
       sendTyping(threadId, bot, true, memberIds);
-      setTimeout(() => {
-        sendTyping(threadId, bot, false, memberIds);
-        transact((d) => {
-          d.messages.push({ id: uid('m'), threadId, fromUserId: bot, text: REPLIES[Math.floor(Math.random() * REPLIES.length)], createdAt: new Date().toISOString() });
-        }).catch((e) => console.warn('bot reply:', e));
-        pending.delete(threadId);
-      }, 1900);
-    }, 1200),
+      await sleep(1900);
+      sendTyping(threadId, bot, false, memberIds);
+      if (job.cancelled) return;
+      pending.delete(threadId);
+      await transact((d) => {
+        d.messages.push({ id: uid('m'), threadId, fromUserId: bot, text: REPLIES[Math.floor(Math.random() * REPLIES.length)], createdAt: new Date().toISOString() });
+      });
+    })(),
   );
 }

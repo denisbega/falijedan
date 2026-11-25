@@ -1,12 +1,17 @@
 import fs from 'node:fs';
 import { config } from '../config.ts';
 import type { StorageAdapter } from './schema.ts';
-import { SqliteStorage } from './sqlite.ts';
 import { PostgresStorage } from './postgres.ts';
 
 /** DATABASE_URL postavljen → Postgres (Supabase); inače lokalni SQLite. */
 export async function createStorage(): Promise<StorageAdapter> {
-  if (!config.database.url) return new SqliteStorage(config.dataDir);
+  if (!config.database.url) {
+    if (config.serverless)
+      throw new Error('DATABASE_URL nije postavljen. Na Vercelu dodaj DATABASE_URL i DATABASE_PASSWORD (Supabase) u Project Settings → Environment Variables, pa ponovo deployaj.');
+    // Dinamički import: node:sqlite se ne učitava (niti pakuje za Vercel) kad se koristi Postgres
+    const { SqliteStorage } = await import('./sqlite.ts');
+    return new SqliteStorage(config.dataDir);
+  }
   if (config.database.url.includes('[YOUR-PASSWORD]') && !config.database.password)
     throw new Error('U DATABASE_URL je ostalo [YOUR-PASSWORD] — zamijeni ga lozinkom baze ili postavi DATABASE_PASSWORD u .env.');
   const pg = new PostgresStorage({

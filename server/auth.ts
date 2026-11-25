@@ -28,7 +28,8 @@ function cookieHeader(value: string, maxAgeSec: number) {
 
 /** Kratki keš sesija (da svaki zahtjev ne ide do baze, bitno kad je baza udaljena — Supabase). */
 const sessionCache = new Map<string, { userId: string; expiresAt: string; cachedAt: number }>();
-const CACHE_MS = 5 * 60000;
+// Serverless (više instanci): bez keša, da odjava odmah važi svuda. Stalni server: 60 s.
+const CACHE_MS = config.serverless ? 0 : 60000;
 
 export async function startSession(req: IncomingMessage, res: ServerResponse, userId: string) {
   const token = crypto.randomBytes(32).toString('base64url');
@@ -43,7 +44,7 @@ export async function currentUserId(req: IncomingMessage): Promise<string | null
   if (!token) return null;
   const hash = sha(token);
   let row = sessionCache.get(hash);
-  if (!row || Date.now() - row.cachedAt > CACHE_MS) {
+  if (!row || Date.now() - row.cachedAt >= CACHE_MS) {
     const found = await db().sessions.find(hash);
     if (!found) {
       sessionCache.delete(hash);
@@ -90,34 +91,33 @@ setInterval(() => {
 
 /* ---------- OAuth ---------- */
 
-const states = new Map<string, { provider: 'google' | 'apple'; expires: number }>();
-function newState(provider: 'google' | 'apple') {
+// "state" se čuva u bazi: callback od Google-a/Apple-a može stići na drugu instancu servera (Vercel)
+async function newState(provider: 'google' | 'apple') {
   const state = crypto.randomBytes(18).toString('base64url');
-  states.set(state, { provider, expires: Date.now() + 10 * 60000 });
+  await db().oauthStates.create(state, provider, Date.now() + 10 * 60000);
   return state;
 }
-function takeState(state: string | null, provider: 'google' | 'apple') {
-  const s = state ? states.get(state) : undefined;
-  if (state) states.delete(state);
-  if (!s || s.provider !== provider || s.expires < Date.now()) throw new ApiError('Prijava je istekla — pokušaj ponovo.', 400);
+async function takeState(state: string | null, provider: 'google' | 'apple') {
+  const found = state ? await db().oauthStates.take(state) : null;
+  if (found !== provider) throw new ApiError('Prijava je istekla — pokušaj ponovo.', 400);
 }
 
 const callbackUrl = (p: 'google' | 'apple') => `${config.publicUrl}/api/auth/${p}/callback`;
 
-export function googleAuthUrl() {
+export async function googleAuthUrl() {
   const q = new URLSearchParams({
     client_id: config.google.clientId,
     redirect_uri: callbackUrl('google'),
     response_type: 'code',
     scope: 'openid email profile',
-    state: newState('google'),
+    state: await newState('google'),
     prompt: 'select_account',
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${q}`;
 }
 
 export async function googleCallback(params: URLSearchParams) {
-  takeState(params.get('state'), 'google');
+  await takeState(params.get('state'), 'google');
   const code = params.get('code');
   if (!code) throw new ApiError('Google prijava je otkazana.');
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -143,20 +143,20 @@ function appleClientSecret() {
   return `${head}.${body}.${sig.toString('base64url')}`;
 }
 
-export function appleAuthUrl() {
+export async function appleAuthUrl() {
   const q = new URLSearchParams({
     client_id: config.apple.clientId,
     redirect_uri: callbackUrl('apple'),
     response_type: 'code',
     response_mode: 'form_post',
     scope: 'name email',
-    state: newState('apple'),
+    state: await newState('apple'),
   });
   return `https://appleid.apple.com/auth/authorize?${q}`;
 }
 
 export async function appleCallback(form: URLSearchParams) {
-  takeState(form.get('state'), 'apple');
+  await takeState(form.get('state'), 'apple');
   const code = form.get('code');
   if (!code) throw new ApiError('Apple prijava je otkazana.');
   const tokenRes = await fetch('https://appleid.apple.com/auth/token', {

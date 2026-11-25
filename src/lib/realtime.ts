@@ -1,12 +1,19 @@
 /**
- * Realtime veza sa serverom (Server-Sent Events).
- * "sync" → povuci svježe podatke (slobodna mjesta, poruke, obavještenja uživo); "typing" → indikator kucanja.
+ * Ažuriranje podataka uživo.
+ * - Stalni server (lokalno, VPS): Server-Sent Events — "sync" → povuci svježe podatke; "typing" → indikator kucanja.
+ * - Serverless (Vercel): kratko periodično provjeravanje /api/sync uz ETag (304 kad nema promjena — jeftino).
+ * Server javlja koji režim koristi (/api/auth/providers → realtime).
  */
 import { store, typingStore } from './store';
 
-let source: EventSource | null = null;
+type Mode = 'sse' | 'poll';
+
 let userId: string | null = null;
+let generation = 0;
+let source: EventSource | null = null;
+let pollTimer: number | undefined;
 let syncTimer: number | undefined;
+let lastActivity = Date.now();
 const typingTimers = new Map<string, number>();
 
 function scheduleSync() {
@@ -14,13 +21,21 @@ function scheduleSync() {
   syncTimer = window.setTimeout(() => void store.refresh(), 120);
 }
 
-export function connectRealtime(forUser: string | null) {
-  if (forUser === userId && (source || !forUser)) return;
-  source?.close();
-  source = null;
-  userId = forUser;
-  if (!forUser || typeof EventSource === 'undefined') return;
+let modePromise: Promise<Mode> | null = null;
+function realtimeMode(): Promise<Mode> {
+  modePromise ??= fetch('/api/auth/providers')
+    .then((r) => (r.ok ? (r.json() as Promise<{ realtime?: Mode }>) : Promise.reject(new Error(String(r.status)))))
+    .then((p) => (p.realtime === 'sse' ? 'sse' : 'poll'))
+    .catch(() => {
+      modePromise = null; // pokušaj ponovo kasnije; polling radi sa svakim serverom
+      return 'poll' as const;
+    });
+  return modePromise;
+}
 
+/* ---------- SSE ---------- */
+
+function startSse() {
   source = new EventSource('/api/events');
   source.addEventListener('sync', scheduleSync);
   source.addEventListener('typing', (e) => {
@@ -37,10 +52,51 @@ export function connectRealtime(forUser: string | null) {
   source.addEventListener('open', scheduleSync);
 }
 
+/* ---------- Polling ---------- */
+
+/** Brže u otvorenom chatu, sporije kad korisnik ništa ne radi (štedi pozive funkcija na Vercelu). */
+function pollInterval() {
+  if (location.pathname.startsWith('/poruke/')) return 2000;
+  return Date.now() - lastActivity > 2 * 60000 ? 15000 : 4000;
+}
+
+function startPolling(gen: number) {
+  const tick = async () => {
+    if (gen !== generation) return;
+    if (document.visibilityState === 'visible' && navigator.onLine !== false) await store.refresh();
+    if (gen === generation) pollTimer = window.setTimeout(tick, pollInterval());
+  };
+  pollTimer = window.setTimeout(tick, pollInterval());
+}
+
+/* ---------- Javni API ---------- */
+
+export function connectRealtime(forUser: string | null) {
+  if (forUser === userId) return;
+  const gen = ++generation;
+  source?.close();
+  source = null;
+  window.clearTimeout(pollTimer);
+  userId = forUser;
+  if (!forUser) return;
+  void realtimeMode().then((mode) => {
+    if (gen !== generation) return;
+    if (mode === 'sse' && typeof EventSource !== 'undefined') startSse();
+    else startPolling(gen);
+  });
+}
+
 // Osvježi kad se korisnik vrati u aplikaciju ili se vrati internet
 if (typeof window !== 'undefined') {
+  const touch = () => {
+    lastActivity = Date.now();
+  };
+  window.addEventListener('pointerdown', touch, { passive: true });
+  window.addEventListener('keydown', touch);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && store.get().currentUserId) scheduleSync();
+    if (document.visibilityState !== 'visible') return;
+    touch();
+    if (store.get().currentUserId) scheduleSync();
   });
   window.addEventListener('online', () => store.get().currentUserId && scheduleSync());
 }

@@ -27,8 +27,8 @@ function send(c: Client, event: string, data: unknown) {
   c.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-export function broadcastSync(rev: number) {
-  for (const c of clients) send(c, 'sync', { rev });
+export function broadcastSync(token: string) {
+  for (const c of clients) send(c, 'sync', { rev: token });
 }
 
 export function sendTyping(threadId: string, userId: string, on: boolean, memberIds: string[]) {

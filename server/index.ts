@@ -6,11 +6,10 @@ import { config, providers } from './config.ts';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { initEngine, onChange, refreshDemoData, shutdownStorage, transact } from './engine.ts';
-import { handleApi } from './routes.ts';
+import { initEngine, onChange, refreshDemoData, runJobs, shutdownStorage } from './engine.ts';
+import { handleApi, SECURITY_HEADERS } from './routes.ts';
 import { broadcastSync } from './realtime.ts';
 import { purgeExpiredSessions } from './auth.ts';
-import { runScheduledJobs } from '../src/lib/rules.ts';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -25,12 +24,6 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-const SECURITY_HEADERS = {
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'strict-origin-when-cross-origin',
-  'X-Frame-Options': 'DENY',
-  'Permissions-Policy': 'geolocation=(self), camera=(), microphone=()',
-};
 
 function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
   if (!fs.existsSync(config.distDir)) {
@@ -60,7 +53,7 @@ try {
 onChange(broadcastSync);
 
 // Zakazani poslovi: podsjetnici (2h prije), pozivi na ocjenjivanje, čišćenje isteklih sesija
-const jobs = () => transact((d) => runScheduledJobs(d, Date.now())).catch((e) => console.error('zakazani poslovi:', e));
+const jobs = () => runJobs().catch((e) => console.error('zakazani poslovi:', e));
 await jobs();
 setInterval(jobs, 60000).unref();
 setInterval(() => purgeExpiredSessions().catch((e) => console.error('sesije:', e)), 6 * 3600000).unref();

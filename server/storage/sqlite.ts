@@ -1,15 +1,17 @@
-/** Lokalna baza (node:sqlite) — podrazumijevano kad DATABASE_URL nije postavljen. */
+/** Lokalna baza (node:sqlite) — podrazumijevano kad DATABASE_URL nije postavljen. Jedan proces = jedini pisac. */
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { DB } from '../../src/lib/types.ts';
-import { ORDER_BY, SPECS, assignRows, computeDiff, emptyState, fromRow, snapshotOf, type Kind, type Row, type Snapshot, type StorageAdapter } from './schema.ts';
+import { ORDER_BY, SPECS, assignRows, computeDiff, emptyState, fromRow, newEpoch, snapshotOf, type Kind, type Mutator, type Row, type Snapshot, type StorageAdapter } from './schema.ts';
 
 const sqlType: Record<Kind, string> = { text: 'TEXT', int: 'INTEGER', real: 'REAL', bool: 'INTEGER', json: 'TEXT' };
 
 export class SqliteStorage implements StorageAdapter {
   readonly kind = 'sqlite' as const;
   readonly label: string;
+  private rev = 0;
+  private epoch = '';
   private db: DatabaseSync;
   private prev: Snapshot = new Map();
   private stmts = new Map<string, { upsert: StatementSync; del: StatementSync }>();
@@ -34,13 +36,31 @@ export class SqliteStorage implements StorageAdapter {
       CREATE TABLE IF NOT EXISTS auth_sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, user_agent TEXT);
       CREATE INDEX IF NOT EXISTS auth_sessions_user ON auth_sessions (user_id);
       CREATE TABLE IF NOT EXISTS identities (provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (provider, subject));
+      CREATE TABLE IF NOT EXISTS oauth_states (state TEXT PRIMARY KEY, provider TEXT NOT NULL, expires_at INTEGER NOT NULL);
     `);
+  }
+
+  private meta(): Record<string, string> {
+    return Object.fromEntries((this.db.prepare('SELECT key, value FROM meta').all() as { key: string; value: string }[]).map((r) => [r.key, r.value]));
+  }
+
+  get token() {
+    return `${this.epoch}.${this.rev}`;
+  }
+
+  async revision() {
+    return this.token;
   }
 
   async load(): Promise<DB | null> {
     const { n } = this.db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number };
-    if (!n) return null;
-    const meta = Object.fromEntries((this.db.prepare('SELECT key, value FROM meta').all() as { key: string; value: string }[]).map((r) => [r.key, r.value]));
+    const meta = this.meta();
+    this.rev = Number(meta.rev ?? 0);
+    this.epoch = meta.epoch ?? '';
+    if (!n) {
+      this.prev = new Map();
+      return null;
+    }
     const db = emptyState(Number(meta.version ?? 0), Number(meta.seeded_at ?? Date.now()));
     for (const spec of SPECS) {
       const rows = (this.db.prepare(`SELECT * FROM ${spec.table}${ORDER_BY[spec.table] ?? ''}`).all() as Row[]).map((r) => fromRow(spec, r));
@@ -50,23 +70,32 @@ export class SqliteStorage implements StorageAdapter {
     return db;
   }
 
-  async persist(state: DB): Promise<boolean> {
-    const diff = computeDiff(this.prev, state);
-    if (diff.empty) return false;
+  async mutate<T>(current: DB | null, fn: Mutator<T>) {
+    // Jedan proces je jedini pisac, pa je stanje iz memorije uvijek aktuelno.
+    const base = current ?? (await this.load());
+    const { next, result } = fn(base);
+    const diff = computeDiff(this.prev, next);
+    if (diff.empty) return { next, result, changed: false };
+    const rev = this.rev + 1;
+    const epoch = this.epoch || newEpoch();
     this.db.exec('BEGIN');
     try {
       for (const [spec, rows] of diff.upserts) for (const vals of rows) this.stmts.get(spec.table)!.upsert.run(...vals);
       for (const [spec, keys] of diff.deletes) for (const key of keys) this.stmts.get(spec.table)!.del.run(...key);
       const meta = this.db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
-      meta.run('version', String(state.version));
-      meta.run('seeded_at', String(state.seededAt));
+      meta.run('version', String(next.version));
+      meta.run('seeded_at', String(next.seededAt));
+      meta.run('rev', String(rev));
+      meta.run('epoch', epoch);
       this.db.exec('COMMIT');
     } catch (e) {
       this.db.exec('ROLLBACK');
       throw e;
     }
     this.prev = diff.next;
-    return true;
+    this.rev = rev;
+    this.epoch = epoch;
+    return { next, result, changed: true };
   }
 
   sessions = {
@@ -82,6 +111,7 @@ export class SqliteStorage implements StorageAdapter {
     },
     purgeExpired: async (nowIso: string) => {
       this.db.prepare('DELETE FROM auth_sessions WHERE expires_at < ?').run(nowIso);
+      this.db.prepare('DELETE FROM oauth_states WHERE expires_at < ?').run(Date.now());
     },
   };
 
@@ -92,6 +122,16 @@ export class SqliteStorage implements StorageAdapter {
     },
     upsert: async (provider: string, subject: string, userId: string) => {
       this.db.prepare('INSERT OR REPLACE INTO identities (provider, subject, user_id, created_at) VALUES (?, ?, ?, ?)').run(provider, subject, userId, new Date().toISOString());
+    },
+  };
+
+  oauthStates = {
+    create: async (state: string, provider: string, expiresAt: number) => {
+      this.db.prepare('INSERT OR REPLACE INTO oauth_states (state, provider, expires_at) VALUES (?, ?, ?)').run(state, provider, expiresAt);
+    },
+    take: async (state: string) => {
+      const row = this.db.prepare('DELETE FROM oauth_states WHERE state = ? RETURNING provider, expires_at').get(state) as { provider: string; expires_at: number } | undefined;
+      return row && row.expires_at >= Date.now() ? row.provider : null;
     },
   };
 

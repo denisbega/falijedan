@@ -44,6 +44,8 @@ export interface Providers {
   google: boolean;
   apple: boolean;
   demo: boolean;
+  /** 'sse' = stalni server sa realtime vezom; 'poll' = serverless (Vercel) */
+  realtime?: 'sse' | 'poll';
 }
 export async function getProviders(): Promise<Providers> {
   try {

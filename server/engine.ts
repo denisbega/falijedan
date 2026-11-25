@@ -1,80 +1,117 @@
 /**
- * Autoritativno stanje servera. Sve izmjene idu kroz transact():
- * nacrt → pravila (src/lib/rules.ts) → upis razlika u bazu (SQLite ili Postgres/Supabase) → realtime.
- * Transakcije se izvršavaju jedna po jedna (red čekanja), pa nema trke za zadnje mjesto u terminu,
- * a stanje u memoriji se mijenja tek kad baza potvrdi upis.
+ * Stanje aplikacije. Izvor istine je baza; ovdje je keš u memoriji koji se provjerava prema reviziji u bazi
+ * (ensureFresh) — tako radi i sa više instanci servera (Vercel serverless funkcije).
+ *
+ * Sve izmjene idu kroz transact(): svježe stanje → pravila (src/lib/rules.ts) → upis razlika → realtime.
+ * Izmjene se izvršavaju jedna po jedna (red čekanja u procesu + zaključavanje u bazi), pa nema trke
+ * za zadnje mjesto u terminu, a keš se mijenja tek kad baza potvrdi upis.
  */
 import type { DB, User } from '../src/lib/types.ts';
 import { createSeed, DEMO_USER_ID, rebaseSeed, SEED_VERSION } from '../src/lib/seed.ts';
+import { runScheduledJobs } from '../src/lib/rules.ts';
 import { config } from './config.ts';
 import { createStorage, type StorageAdapter } from './storage/index.ts';
 import { emptyState } from './storage/schema.ts';
 import { hashPassword } from './passwords.ts';
 
 let storage: StorageAdapter;
-let state: DB;
-let rev = 0;
-const bootId = Date.now().toString(36);
-const listeners = new Set<(rev: number) => void>();
+let state: DB = emptyState(SEED_VERSION, Date.now());
+let initPromise: Promise<void> | null = null;
+const listeners = new Set<(token: string) => void>();
 let queue: Promise<unknown> = Promise.resolve();
 
-export async function initEngine() {
-  storage = await createStorage();
-  const loaded = await storage.load();
-  if (loaded) {
-    state = loaded;
-  } else {
-    state = config.demo ? createSeed(Date.now()) : emptyState(SEED_VERSION, Date.now());
-    if (config.demo) {
-      for (const u of state.users) u.passwordHash = null;
-      const demo = state.users.find((u) => u.id === DEMO_USER_ID);
-      if (demo) demo.passwordHash = await hashPassword('demo1234');
-    }
-    await storage.persist(state);
-    console.log(config.demo ? '› Baza kreirana sa demo podacima (Bijeljina).' : '› Kreirana prazna baza.');
-  }
-  console.log(`› Baza: ${storage.label}`);
-  if (config.demo) await refreshDemoData();
-}
-
-/** Izvršava posao u redu čekanja (jedan po jedan). */
+/** Izvršava posao u redu čekanja (jedan po jedan unutar procesa). */
 function enqueue<T>(job: () => Promise<T>): Promise<T> {
   const p = queue.then(job, job);
   queue = p.catch(() => undefined);
   return p;
 }
 
-async function commit(next: DB) {
-  const changed = await storage.persist(next);
+function setState(next: DB, changed: boolean) {
   state = next;
-  if (changed) {
-    rev++;
-    listeners.forEach((l) => l(rev));
-  }
-  return changed;
+  if (changed) listeners.forEach((l) => l(storage.token));
 }
 
-/** Transakcija nad nacrtom stanja. Ako pravilo baci grešku ili upis ne uspije, stanje ostaje netaknuto. */
+async function buildSeed(): Promise<DB> {
+  if (!config.demo) return emptyState(SEED_VERSION, Date.now());
+  const seed = createSeed(Date.now());
+  for (const u of seed.users) u.passwordHash = null;
+  const demo = seed.users.find((u) => u.id === DEMO_USER_ID);
+  if (demo) demo.passwordHash = await hashPassword('demo1234');
+  return seed;
+}
+
+/** Učitava stanje iz baze; ako je baza prazna, kreira početne podatke (pod zaključavanjem — samo jedna instanca). */
+async function reload() {
+  const loaded = await storage.load();
+  if (loaded) return setState(loaded, true);
+  const seed = await buildSeed();
+  const out = await storage.mutate(null, (base) => (base ? { next: base, result: false } : { next: seed, result: true }));
+  setState(out.next, true);
+  if (out.result && out.changed) console.log(config.demo ? '› Baza kreirana sa demo podacima (Bijeljina).' : '› Kreirana prazna baza.');
+}
+
+export function initEngine(): Promise<void> {
+  if (!initPromise) {
+    initPromise = (async () => {
+      storage = await createStorage();
+      await enqueue(reload);
+      console.log(`› Baza: ${storage.label}`);
+      if (config.demo) await refreshDemoData();
+    })();
+    // Serverless: ako start ne uspije (npr. baza nedostupna), sljedeći zahtjev pokušava ponovo
+    initPromise.catch(() => {
+      initPromise = null;
+    });
+  }
+  return initPromise;
+}
+
+let freshInflight: Promise<void> | null = null;
+/** Provjeri da li je druga instanca nešto promijenila (jedan brz upit) i po potrebi učitaj svježe stanje. */
+export function ensureFresh(): Promise<void> {
+  freshInflight ??= enqueue(async () => {
+    if ((await storage.revision()) !== storage.token) await reload();
+  }).finally(() => {
+    freshInflight = null;
+  });
+  return freshInflight;
+}
+
+/** Izmjena pod zaključavanjem. Ako pravilo baci grešku ili upis ne uspije, ništa se ne mijenja. */
 export function transact<T>(fn: (draft: DB) => T): Promise<T> {
   return enqueue(async () => {
-    const draft = structuredClone(state);
-    const result = fn(draft);
-    await commit(draft);
-    return result;
+    const out = await storage.mutate(state, (base) => {
+      // Druga instanca je u međuvremenu nešto upisala → radimo nad svježim stanjem iz baze
+      if (base && base !== state) setState(base, true);
+      // base === null → baza je prazna (npr. upravo obrisana); nikad ne vraćamo stari keš u bazu
+      const draft = structuredClone(base ?? emptyState(SEED_VERSION, Date.now()));
+      return { next: draft, result: fn(draft) };
+    });
+    setState(out.next, out.changed);
+    return out.result;
   });
 }
 
 /** Demo podaci se pomjeraju u sadašnjost da uvijek postoje svježi termini. */
 export function refreshDemoData() {
   return enqueue(async () => {
-    const next = rebaseSeed(state, Date.now());
-    if (next !== state) await commit(structuredClone(next));
+    const out = await storage.mutate(state, (base) => {
+      if (base && base !== state) setState(base, true);
+      const b = base ?? emptyState(SEED_VERSION, Date.now());
+      const next = rebaseSeed(b, Date.now());
+      return { next: next === b ? b : structuredClone(next), result: null };
+    });
+    setState(out.next, out.changed);
   });
 }
 
+/** Podsjetnici (2 h prije termina) i pozivi na ocjenjivanje — idempotentno, smije se pozivati često. */
+export const runJobs = () => transact((d) => runScheduledJobs(d, Date.now()));
+
 export const read = (): DB => state;
-export const onChange = (fn: (rev: number) => void) => listeners.add(fn);
-export const etagFor = (userId: string) => `W/"${bootId}.${rev}.${userId}"`;
+export const onChange = (fn: (token: string) => void) => listeners.add(fn);
+export const etagFor = (userId: string) => `W/"${storage.token}.${userId}"`;
 export const findUser = (id: string): User | undefined => state.users.find((u) => u.id === id);
 export const findUserByEmail = (email: string): User | undefined => state.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
 export const db = () => storage;

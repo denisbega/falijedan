@@ -260,13 +260,30 @@ export interface AuthSessionRow {
   userAgent: string;
 }
 
+/**
+ * Izmjena stanja: dobije svježe stanje iz baze (base; null ako je baza prazna) i vrati novo stanje.
+ * Smije baciti grešku (npr. ApiError) — tada se ništa ne upisuje.
+ */
+export type Mutator<T> = (base: DB | null) => { next: DB; result: T };
+
 export interface StorageAdapter {
   readonly kind: 'sqlite' | 'postgres';
   readonly label: string;
+  /**
+   * Verzija stanja koje je adapter zadnje učitao/upisao: "<epoch>.<rev>" — rev raste sa svakom izmjenom,
+   * epoch je nasumični ID baze (mijenja se kad se baza napravi iznova). Koristi se i za ETag.
+   */
+  readonly token: string;
+  /** Trenutna verzija u bazi (jedan brz upit) — ako se razlikuje od `token`, druga instanca je nešto promijenila. */
+  revision(): Promise<string>;
   /** Cijelo stanje; null ako je baza prazna. */
   load(): Promise<DB | null>;
-  /** Upisuje razlike; vraća true ako se nešto promijenilo. */
-  persist(state: DB): Promise<boolean>;
+  /**
+   * Izmjena pod globalnim zaključavanjem baze (više instanci servera / serverless funkcija):
+   * provjeri reviziju, po potrebi učita svježe stanje, primijeni mutator, upiše razlike i poveća reviziju.
+   * `current` je stanje koje pozivalac već ima u memoriji (koristi se ako je i dalje aktuelno).
+   */
+  mutate<T>(current: DB | null, fn: Mutator<T>): Promise<{ next: DB; result: T; changed: boolean }>;
   sessions: {
     create(row: AuthSessionRow): Promise<void>;
     find(tokenHash: string): Promise<{ userId: string; expiresAt: string } | null>;
@@ -277,5 +294,13 @@ export interface StorageAdapter {
     find(provider: string, subject: string): Promise<string | null>;
     upsert(provider: string, subject: string, userId: string): Promise<void>;
   };
+  /** Jednokratni OAuth "state" (u bazi, jer callback može stići na drugu instancu). */
+  oauthStates: {
+    create(state: string, provider: string, expiresAt: number): Promise<void>;
+    /** Vraća provider i briše state; null ako ne postoji ili je istekao. */
+    take(state: string): Promise<string | null>;
+  };
   close(): Promise<void>;
 }
+
+export const newEpoch = () => Math.random().toString(36).slice(2, 10);

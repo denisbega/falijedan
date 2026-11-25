@@ -63,21 +63,26 @@ Server koristi Supabase kao Postgres bazu: sam kreira tabele (u šemi `falijedan
 
 **Ako ne radi**, server ispiše razlog i savjet (pogrešna lozinka, „Tenant or user not found“ = pogrešno korisničko ime, IPv6/Direct connection, projekat pauziran…). Besplatni Supabase projekti se pauziraju nakon nedjelju dana neaktivnosti — vrati ga u rad u dashboardu.
 
-## Deploy (Render)
+## Deploy na Vercel
 
-Server je Node proces koji stalno radi (podaci u memoriji, realtime veze, zakazani poslovi svake minute), pa **ne radi na Vercelu/Netlify-u**: tamo se objavi samo frontend, `/api` ne postoji i aplikacija pokazuje „Server trenutno nije dostupan“. Treba hosting koji pokreće Node server: Render, Railway, Fly.io ili VPS. Jedan servis služi i aplikaciju i API.
+`vercel.json` + `scripts/build-vercel.mjs` prave Vercel Build Output: statični frontend na CDN-u i **jedna serverless funkcija** za sve `/api/*` rute. Baza mora biti Postgres (Supabase), jer Vercel nema trajni disk.
 
-Render (podešavanje je u `render.yaml`):
+1. Vercel → projekat → **Settings → Environment Variables** (Production + Preview):
+   | Varijabla | Vrijednost |
+   |---|---|
+   | `DATABASE_URL` | Supabase → Connect → **Transaction pooler** (port `6543`) ili Session pooler (`5432`), sa `[YOUR-PASSWORD]` |
+   | `DATABASE_PASSWORD` | lozinka baze |
+   | `DEMO_MODE` | `false` za pravo lansiranje (`true` = demo nalog i simulirani igrači) |
+2. **Deployments → Redeploy** (ili push na `main`). Build sam podesi region funkcije prema regionu baze (npr. `eu-west-1` → `dub1`); ručno: `FUNCTION_REGION=fra1`.
+3. Provjera: `https://<projekat>.vercel.app/api/health` → `{"ok":true,…}`.
 
-1. [render.com](https://render.com) → prijava sa GitHub-om → **New → Blueprint** → izaberi repo `falijedan`.
-2. Upiši `DATABASE_URL` (Supabase Session pooler URI sa `[YOUR-PASSWORD]`) i `DATABASE_PASSWORD` → **Deploy**.
-3. Za par minuta aplikacija je na `https://falijedan….onrender.com`. Javnu adresu server sam pročita (`RENDER_EXTERNAL_URL`), pa `PUBLIC_URL` nije potreban osim za vlastiti domen. **`PORT` ne postavljaj** — Render ga postavlja sam.
+Framework, build i install komanda su u `vercel.json` — u Vercel podešavanjima ništa ne treba mijenjati. `PORT` i `PUBLIC_URL` nisu potrebni.
 
-Besplatni plan „uspava“ servis nakon 15 min bez posjeta; prvo otvaranje nakon toga traje oko minut. Plan *Starter* je uvijek budan.
+**Kako radi bez stalnog servera:** svaki zahtjev jednim brzim upitom provjeri reviziju u bazi i po potrebi učita svježe stanje; izmjene idu pod zaključavanjem u Postgresu (`pg_advisory_xact_lock`), pa je sigurno i sa više instanci istovremeno (Vercel, lokalni server nad istom bazom…). Umjesto realtime veze (SSE) aplikacija na Vercelu svake 2–4 s provjerava promjene (`304` kad nema ničega novog; sporije kad korisnik miruje), a indikator „kuca…“ postoji samo na stalnom serveru. Podsjetnici i pozivi na ocjenjivanje se pokreću uz zahtjeve, najviše jednom u minuti.
 
-**Važno — jedna instanca po bazi:** dok produkcija radi nad Supabase bazom, lokalno **ne pokreći server sa istim `DATABASE_URL`**. Dva servera bi jedan drugom pregazila izmjene. Lokalno izbaci `DATABASE_URL` iz `.env` (koristi se SQLite) ili postavi `DATABASE_SCHEMA=falijedan_dev`.
+**Čist početak u produkciji:** ako je baza ranije napunjena demo podacima, u Supabase → SQL Editor pokreni `drop schema falijedan cascade;` — server pri sljedećem zahtjevu sam ponovo kreira tabele (prazne ako je `DEMO_MODE=false`).
 
-**Čist početak u produkciji:** ako je baza ranije napunjena demo podacima (lokalno pokretanje sa `DEMO_MODE=true`), u Supabase → SQL Editor pokreni `drop schema falijedan cascade;` pa restartuj servis — tabele se ponovo kreiraju prazne.
+**Alternativa — stalni Node server** (VPS, Render, Railway…): `npm run build && npm start`; tada radi i SSE realtime.
 
 ## Arhitektura
 
@@ -93,12 +98,13 @@ server/
   auth.ts        scrypt lozinke, sesije, ograničenje pokušaja, Google/Apple OAuth
   realtime.ts    Server-Sent Events (/api/events): "sync" i "kuca…"
   bots.ts        samo u demo režimu: simulirani igrači se prijavljuju i odgovaraju
+  vercel.ts      Vercel serverless funkcija (/api/*): provjera svježine, zakazani poslovi uz zahtjeve
 src/lib/
   rules.ts       SVA poslovna pravila (izvršava ih server) — prijava, lista čekanja, ocjene, poruke…
   selectors.ts   izvedena polja: koliko fali, ocjena, pouzdanost, statusi (dijeli server i klijent)
   api.ts         klijent: poziva API, svaki odgovor donosi svjež snimak podataka
   store.ts       klijentski keš (ETag sync, lokalna kopija za offline prikaz)
-  realtime.ts    EventSource veza; osvježava podatke uživo
+  realtime.ts    osvježavanje uživo: SSE (stalni server) ili polling uz ETag (Vercel)
 ```
 
 **Pravila koja provodi server:** prijava je zabranjena ako je termin pun, počeo ili otkazan; lista čekanja — kad se neko odjavi, prvi sa liste ulazi u ekipu i dobija obavještenje; ocjenjuju samo saigrači sa istog završenog termina, jednom po terminu; izostanak („nije došao“) se bilježi kad ga prijavi organizator ili dvoje saigrača i utiče na pouzdanost; organizator može ukloniti igrača i otkazati termin (svi dobijaju obavještenje); podsjetnik 2 h prije termina i poziv na ocjenjivanje; novi termin → obavještenje igračima tog sporta u njihovom radijusu.
@@ -106,7 +112,7 @@ src/lib/
 **API (sve POST rute primaju JSON):**
 `/api/auth/{register,login,logout,demo,providers}`, `/api/auth/{google,apple}` · `GET /api/sync` · `GET /api/events` · `/api/profile` · `/api/sessions` · `/api/sessions/:id/{join,leave,cancel,remove,ratings,invite}` · `/api/threads/direct` · `/api/threads/:id/{messages,read}` · `/api/notifications/{:id/read,read-all}`
 
-**Skaliranje:** jedan Node proces (sa Supabase ili SQLite bazom) je dovoljan za regionalno lansiranje (stotine do nekoliko hiljada korisnika). Server drži stanje u memoriji, pa mora raditi **jedna instanca** — ne pokreći dva servera nad istom bazom. Sljedeći koraci: djelimični sync umjesto punog snimka i web push obavještenja na telefon.
+**Skaliranje:** stanje se drži u memoriji kao keš i provjerava prema reviziji u bazi, a izmjene idu pod zaključavanjem — pa nad istom Supabase bazom smije raditi više instanci (Vercel funkcije, lokalni server). Dovoljno za regionalno lansiranje (stotine do nekoliko hiljada korisnika). Sljedeći koraci: djelimični sync umjesto punog snimka, Supabase Realtime umjesto pollinga na Vercelu i web push obavještenja na telefon.
 
 ## Logotipi — gdje se koristi koji
 
