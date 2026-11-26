@@ -4,7 +4,9 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import { Bug, FlaskConical, Lightbulb, Send } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Bug, ChevronLeft, ChevronRight, FlaskConical, HeartHandshake, Lightbulb, Send } from 'lucide-react';
+import { cn } from '../../lib/utils';
 import { JUST_LOGGED_IN_KEY, openDirectThread, sendMessage } from '../../lib/api';
 import { useDB, useMe } from '../../lib/hooks';
 import { store } from '../../lib/store';
@@ -20,7 +22,8 @@ interface FeedbackApi {
 const Ctx = createContext<FeedbackApi>({ available: false, open: () => undefined });
 export const useFeedback = () => useContext(Ctx);
 
-const seenKey = (userId: string) => `falijedan:test-faza:${userId}`;
+// v2: dodan korak o reklamama — svi ga vide jednom, i oni koji su prvu verziju već zatvorili
+const seenKey = (userId: string) => `falijedan:test-faza-v2:${userId}`;
 
 /** Prikaži nakon svake prijave, i jednom svakom korisniku koji je već bio prijavljen kad je obavještenje uvedeno. */
 function shouldShowNotice(userId: string): boolean {
@@ -85,9 +88,15 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Obavještenje ima 2 koraka: test faza (+ prijava buga) → zašto aplikacija ima reklame
+  const [step, setStep] = useState<1 | 2>(1);
+  // Prijava buga otvorena iz 1. koraka: nakon forme se vraćamo na 2. korak, da ga korisnik ne preskoči
+  const [resumeNotice, setResumeNotice] = useState(false);
+
   useEffect(() => {
     if (!synced || !me || !support || !shouldShowNotice(me.id)) return;
     markNoticeShown(me.id);
+    setStep(1);
     setNotice(true);
   }, [synced, me, support]);
 
@@ -99,6 +108,15 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   }, []);
   const api = useMemo<FeedbackApi>(() => ({ available: !!support, open }), [support, open]);
 
+  const closeForm = () => {
+    setFormOpen(false);
+    if (resumeNotice) {
+      setResumeNotice(false);
+      setStep(2);
+      setNotice(true);
+    }
+  };
+
   const send = async () => {
     if (!support) return;
     setBusy(true);
@@ -107,7 +125,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       const body = `${header}\n${text.trim()}\n\n— Stranica: ${page.slice(0, 60)} · ${deviceInfo()}`;
       const threadId = await openDirectThread(support.id);
       await sendMessage(threadId, body);
-      setFormOpen(false);
+      closeForm();
       setText('');
       toast({
         title: 'Hvala! Prijava je poslana.',
@@ -128,39 +146,89 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       <GlassModal
         open={notice && !!support}
         onClose={() => setNotice(false)}
-        title="FaliJedan je u test fazi"
+        title={step === 1 ? 'FaliJedan je u test fazi' : 'Zašto vidiš reklame'}
         footer={
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <GlassButton variant="secondary" className="sm:flex-1" onClick={() => setNotice(false)}>
-              Razumijem
-            </GlassButton>
-            <GlassButton icon={Bug} className="sm:flex-[2]" onClick={() => open('bug')}>
-              Prijavi bug ili ideju
-            </GlassButton>
-          </div>
+          step === 1 ? (
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <GlassButton
+                variant="secondary"
+                icon={Bug}
+                className="sm:flex-1"
+                onClick={() => {
+                  setResumeNotice(true);
+                  open('bug');
+                }}
+              >
+                Prijavi bug ili ideju
+              </GlassButton>
+              <GlassButton iconRight={ChevronRight} className="sm:flex-1" onClick={() => setStep(2)}>
+                Dalje
+              </GlassButton>
+            </div>
+          ) : (
+            <div className="flex gap-3">
+              <GlassButton variant="secondary" icon={ChevronLeft} className="flex-1" onClick={() => setStep(1)}>
+                Nazad
+              </GlassButton>
+              <GlassButton className="flex-[2]" onClick={() => setNotice(false)}>
+                Razumijem
+              </GlassButton>
+            </div>
+          )
         }
       >
-        <div className="space-y-3 text-[15px] leading-relaxed text-fj-text-2">
-          <span className="grid size-12 place-items-center rounded-[14px] border border-[rgba(32,196,90,0.3)] bg-[rgba(32,196,90,0.12)] text-fj-green" aria-hidden>
-            <FlaskConical className="size-6" />
-          </span>
-          <p>Aplikacija je još uvijek u testnoj fazi — moguće je da nešto ne radi kako treba ili da se funkcije i izgled mijenjaju.</p>
-          <p>
-            Ako primijetiš grešku ili imaš ideju šta bi trebalo dodati ili poboljšati, <span className="font-bold text-white">javi nam</span> — svaka prijava pomaže
-            da FaliJedan bude bolji.
-          </p>
-          <p className="text-[13px]">Prijavu uvijek možeš poslati iz menija: „Prijavi bug“ (na telefonu u Profilu).</p>
+        <div className="mb-4 flex items-center gap-2" aria-label={`Korak ${step} od 2`}>
+          {[1, 2].map((n) => (
+            <span key={n} aria-hidden className={cn('h-1.5 rounded-full transition-all duration-300', n === step ? 'w-6 bg-fj-green' : 'w-1.5 bg-white/20')} />
+          ))}
+          <span className="ml-1 text-[12px] font-bold text-fj-muted">{step}/2</span>
         </div>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={step}
+            initial={{ opacity: 0, x: 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -16 }}
+            transition={{ duration: 0.18 }}
+            className="space-y-3 text-[15px] leading-relaxed text-fj-text-2"
+          >
+            {step === 1 ? (
+              <>
+                <span className="grid size-12 place-items-center rounded-[14px] border border-[rgba(32,196,90,0.3)] bg-[rgba(32,196,90,0.12)] text-fj-green" aria-hidden>
+                  <FlaskConical className="size-6" />
+                </span>
+                <p>Aplikacija je još uvijek u testnoj fazi — moguće je da nešto ne radi kako treba ili da se funkcije i izgled mijenjaju.</p>
+                <p>
+                  Ako primijetiš grešku ili imaš ideju šta bi trebalo dodati ili poboljšati, <span className="font-bold text-white">javi nam</span> — svaka prijava
+                  pomaže da FaliJedan bude bolji.
+                </p>
+                <p className="text-[13px]">Prijavu uvijek možeš poslati iz menija: „Prijavi bug“ (na telefonu u Profilu).</p>
+              </>
+            ) : (
+              <>
+                <span className="grid size-12 place-items-center rounded-[14px] border border-[rgba(32,196,90,0.3)] bg-[rgba(32,196,90,0.12)] text-fj-green" aria-hidden>
+                  <HeartHandshake className="size-6" />
+                </span>
+                <p>
+                  FaliJedan je mali <span className="font-bold text-white">startup koji još nije profitabilan</span>.
+                </p>
+                <p>Preko Google reklama pokušavamo zaraditi za dalji razvoj aplikacije i njeno održavanje — servere, bazu i sve što je potrebno da aplikacija radi.</p>
+                <p>Zato reklame držimo na minimumu: po jedna na Početnoj i u Istraži, bez iskačućih reklama i bez reklama u porukama.</p>
+                <p className="font-bold text-white">Hvala ti što igraš sa nama i podržavaš FaliJedan!</p>
+              </>
+            )}
+          </motion.div>
+        </AnimatePresence>
       </GlassModal>
 
       <GlassModal
         open={formOpen && !!support}
-        onClose={() => !busy && setFormOpen(false)}
+        onClose={() => !busy && closeForm()}
         title="Prijavi bug ili ideju"
         description="Poruka ide direktno adminu, a odgovor stiže u Poruke."
         footer={
           <div className="flex gap-3">
-            <GlassButton variant="secondary" className="flex-1" onClick={() => setFormOpen(false)} disabled={busy}>
+            <GlassButton variant="secondary" className="flex-1" onClick={closeForm} disabled={busy}>
               Odustani
             </GlassButton>
             <GlassButton icon={Send} className="flex-[2]" onClick={send} disabled={text.trim().length < 5} loading={busy}>
