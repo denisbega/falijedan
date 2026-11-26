@@ -8,7 +8,7 @@ import './serverless-env.ts'; // mora biti prvi import: uključuje serverless re
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { config } from './config.ts';
 import { initEngine, refreshDemoData, runJobs } from './engine.ts';
-import { handleApi, sendJson } from './routes.ts';
+import { handleApi, sendJson, withoutDb } from './routes.ts';
 import { purgeExpiredSessions } from './auth.ts';
 import { background } from './background.ts';
 
@@ -29,6 +29,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     url.pathname = `/api/${original}`;
     url.searchParams.delete('__p');
   }
+
+  // Podešavanja (ekran prijave) ne čekaju povezivanje s bazom pri hladnom startu
+  if (withoutDb(url.pathname)) return handleApi(req, res, url);
 
   try {
     await initEngine();

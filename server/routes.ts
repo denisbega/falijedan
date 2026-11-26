@@ -531,6 +531,12 @@ on('POST', '/api/admin/users/:id/delete', async (ctx) => {
 
 /* ---------- Dispečer ---------- */
 
+/**
+ * Rute koje ne čitaju bazu (samo podešavanja servera). Odgovaraju odmah, i dok se baza tek povezuje
+ * (hladan start Vercel funkcije) — inače ekran prijave čeka bazu da bi saznao npr. Turnstile ključ.
+ */
+export const withoutDb = (pathname: string) => pathname === '/api/auth/providers';
+
 async function readBody(req: IncomingMessage, limit = 64 * 1024): Promise<string> {
   const declared = Number(req.headers['content-length'] ?? 0);
   if (declared > limit) throw new ApiError('Zahtjev je prevelik.', 413);
@@ -597,7 +603,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, url: 
       }
     }
     // Da li je druga instanca servera nešto promijenila (Vercel: više funkcija nad istom bazom)
-    await ensureFresh();
+    if (!withoutDb(url.pathname)) await ensureFresh();
     await match[2]({ req, res, url, params, body, ip });
   } catch (e) {
     if (res.headersSent) return void res.end();

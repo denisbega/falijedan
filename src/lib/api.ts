@@ -53,14 +53,21 @@ export interface Providers {
   /** "Zaboravljena lozinka" je dostupna */
   passwordReset?: boolean;
 }
-export async function getProviders(): Promise<Providers> {
-  try {
-    const res = await fetch('/api/auth/providers');
-    if (res.ok) return (await res.json()) as Providers;
-  } catch {
-    /* server nedostupan */
+/**
+ * Podešavanja servera za ekran prijave. Nekoliko pokušaja (hladan start servera, slab mobilni internet);
+ * null ako server ne odgovori — tada pozivalac pokušava ponovo kasnije, umjesto da npr. sakrije Turnstile.
+ */
+export async function getProviders(): Promise<Providers | null> {
+  for (const wait of [0, 700, 2000]) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    try {
+      const res = await fetch('/api/auth/providers', { cache: 'no-store' });
+      if (res.ok) return (await res.json()) as Providers;
+    } catch {
+      /* server nedostupan — sljedeći pokušaj */
+    }
   }
-  return { google: false, apple: false, demo: false };
+  return null;
 }
 
 /** Nakon prijave se ponovo prikazuje obavještenje o test fazi (components/feedback/Feedback.tsx). */

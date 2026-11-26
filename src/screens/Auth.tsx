@@ -45,12 +45,20 @@ function Turnstile({ siteKey, onToken }: { siteKey: string; onToken: (token: str
   const ref = useRef<HTMLDivElement>(null);
   const cb = useRef(onToken);
   cb.current = onToken;
+  // Skripta se nije učitala (slab internet, blokator…) — umjesto praznog mjesta poruka i novi pokušaj
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let id: string | undefined;
     let cancelled = false;
+    const fail = () => {
+      cb.current('');
+      if (!cancelled) setFailed(true);
+    };
     loadTurnstile()
       .then(() => {
-        if (cancelled || !ref.current || !window.turnstile) return;
+        if (cancelled || !ref.current) return;
+        if (!window.turnstile) return fail();
         id = window.turnstile.render(ref.current, {
           sitekey: siteKey,
           theme: 'dark',
@@ -60,12 +68,28 @@ function Turnstile({ siteKey, onToken }: { siteKey: string; onToken: (token: str
           'error-callback': () => cb.current(''),
         });
       })
-      .catch(() => cb.current(''));
+      .catch(fail);
     return () => {
       cancelled = true;
       if (id) window.turnstile?.remove(id);
     };
-  }, [siteKey]);
+  }, [siteKey, attempt]);
+  if (failed)
+    return (
+      <div role="alert" className="flex min-h-16.25 flex-col items-center justify-center gap-1 rounded-[14px] border border-white/10 bg-white/5 px-4 py-3 text-center text-[13px] text-fj-text-2">
+        <span>Provjera „nisi robot“ se nije učitala.</span>
+        <button
+          type="button"
+          onClick={() => {
+            setFailed(false);
+            setAttempt((a) => a + 1);
+          }}
+          className="rounded-lg px-1 py-0.5 font-bold text-fj-green hover:underline"
+        >
+          Pokušaj ponovo
+        </button>
+      </div>
+    );
   return <div ref={ref} className="flex min-h-16.25 justify-center" />;
 }
 
@@ -85,10 +109,18 @@ export function Auth() {
   const [providers, setProviders] = useState<Providers | null>(null);
   const [params] = useSearchParams();
   useEffect(() => {
-    void getProviders().then(setProviders);
     const e = params.get('greska');
     if (e) setErr(OAUTH_ERRORS[e] ?? OAUTH_ERRORS.neuspjela);
   }, [params]);
+  // Dok podešavanja nisu stigla (server nije odgovorio), pokušava se ponovo pri promjeni taba i nakon greške
+  useEffect(() => {
+    if (providers) return;
+    let alive = true;
+    void getProviders().then((p) => alive && p && setProviders(p));
+    return () => {
+      alive = false;
+    };
+  }, [providers, mode, err]);
   const [captcha, setCaptcha] = useState('');
   const [captchaKey, setCaptchaKey] = useState(0);
   const siteKey = mode === 'register' ? providers?.turnstileSiteKey : null;
