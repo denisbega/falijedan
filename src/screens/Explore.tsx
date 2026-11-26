@@ -6,7 +6,9 @@ import { useFirstLoad, useMe, useNow, useOnline, useSessionViews } from '../lib/
 import { dayDiff, formatPrice, sessionsSeeking, termini } from '../lib/format';
 import { LEVELS, SPORTS, getSport, isSportId } from '../lib/sports';
 import type { Level, SportId } from '../lib/types';
+import { cn } from '../lib/utils';
 import {
+  AdSlot,
   EmptyState,
   GlassButton,
   GlassChip,
@@ -25,6 +27,8 @@ import {
 } from '../components/ui';
 import { SessionCard } from '../components/session/SessionCard';
 
+/** Reklama u listi termina dolazi poslije ovoliko kartica */
+const AD_AFTER = 6;
 const SessionMap = lazy(() => import('../components/session/SessionMap'));
 
 type TimeFilter = 'today' | 'tomorrow' | 'weekend' | null;
@@ -185,22 +189,32 @@ export function Explore() {
             ))}
           </div>
         ) : results.length ? (
-          <motion.div layout className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
-            <AnimatePresence mode="popLayout">
-              {results.map((v, i) => (
-                <motion.div
-                  key={v.id}
-                  layout
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.97 }}
-                  transition={{ duration: 0.28, delay: Math.min(i, 8) * 0.04 }}
-                >
-                  <SessionCard s={v} className="h-full" />
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          </motion.div>
+          <>
+            {/* Reklama (ako je AdSense uključen) poslije 6 termina — 6 popunjava redove sa 1, 2 i 3 kolone */}
+            {[results.slice(0, AD_AFTER), results.slice(AD_AFTER)].map((part, p) =>
+              part.length ? (
+                <div key={p}>
+                  {p === 1 && <AdSlot className="mt-4" />}
+                  <motion.div layout className={cn('grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fill,minmax(280px,1fr))]', p === 1 && 'mt-4')}>
+                    <AnimatePresence mode="popLayout">
+                      {part.map((v, i) => (
+                        <motion.div
+                          key={v.id}
+                          layout
+                          initial={{ opacity: 0, y: 16 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.97 }}
+                          transition={{ duration: 0.28, delay: Math.min(i + p * AD_AFTER, 8) * 0.04 }}
+                        >
+                          <SessionCard s={v} className="h-full" />
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
+                  </motion.div>
+                </div>
+              ) : null,
+            )}
+          </>
         ) : (
           <EmptyState
             icon={SearchX}

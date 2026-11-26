@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { build } from 'vite';
-import { staticHeaders } from '../server/headers.ts';
+import { isAdsenseClient, staticHeaders } from '../server/headers.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 const out = path.join(root, '.vercel', 'output');
@@ -89,7 +89,7 @@ fs.writeFileSync(
       version: 3,
       routes: [
         // Sigurnosna zaglavlja + CSP za sve (isti izvor kao stalni server: server/headers.ts)
-        { src: '^/(.*)$', headers: staticHeaders({ https: true, turnstile: !!process.env.TURNSTILE_SITE_KEY }), continue: true },
+        { src: '^/(.*)$', headers: staticHeaders({ https: true, turnstile: !!process.env.TURNSTILE_SITE_KEY, ads: isAdsenseClient(process.env.ADSENSE_CLIENT) }), continue: true },
         { src: '^/assets/(.*)$', headers: { 'cache-control': 'public, max-age=31536000, immutable' }, continue: true },
         { src: '^/(sw\.js|index\.html)?$', headers: { 'cache-control': 'no-cache' }, continue: true },
         { src: '^/api(?:/(.*))?$', dest: '/api?__p=$1' },

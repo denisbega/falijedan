@@ -12,3 +12,4 @@ export * from './EmptyState';
 export * from './SportIcon';
 export * from './Toast';
 export * from './Page';
+export * from './AdSlot';

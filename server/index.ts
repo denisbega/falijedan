@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { initEngine, onChange, refreshDemoData, runJobs, shutdownStorage } from './engine.ts';
 import { handleApi, sendJson } from './routes.ts';
-import { staticHeaders } from './headers.ts';
+import { isAdsenseClient, staticHeaders } from './headers.ts';
 import { broadcastSync } from './realtime.ts';
 import { purgeExpiredSessions } from './auth.ts';
 
@@ -25,7 +25,7 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-const STATIC_HEADERS = staticHeaders({ https: config.cookieSecure, turnstile: !!config.turnstile.siteKey });
+const STATIC_HEADERS = staticHeaders({ https: config.cookieSecure, turnstile: !!config.turnstile.siteKey, ads: isAdsenseClient(process.env.ADSENSE_CLIENT) });
 
 function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
   if (!fs.existsSync(config.distDir)) {

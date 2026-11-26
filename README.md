@@ -38,6 +38,7 @@ Kopiraj `.env.example` u `.env`. Najvažnije:
 | `TRUST_PROXY` | vlastiti server iza reverse proxyja: IP klijenta iz `X-Forwarded-For` |
 | `BREVO_API_KEY` ili `RESEND_API_KEY` + `EMAIL_FROM` | slanje emaila: potvrda naloga i nova lozinka (vidi „Email“) |
 | `ADMIN_EMAILS` | emailovi super admin naloga, odvojeni zarezom (vidi „Admin panel“) |
+| `ADSENSE_CLIENT` + `ADSENSE_SLOT` (+ `ADSENSE_LAYOUT_KEY`) | Google AdSense reklame (vidi „Reklame“); bez njih nema reklama |
 | `DATA_DIR` | folder SQLite baze (podrazumijevano `server/data`) |
 | `GOOGLE_CLIENT_ID/SECRET` | uključuje „Nastavi sa Google“ (redirect URI: `{PUBLIC_URL}/api/auth/google/callback`) |
 | `APPLE_CLIENT_ID/TEAM_ID/KEY_ID/PRIVATE_KEY` | uključuje „Nastavi sa Apple“ (return URL: `{PUBLIC_URL}/api/auth/apple/callback`, mora https) |
@@ -119,6 +120,21 @@ Admin dobija stranicu **Admin panel** (`/admin`; u bočnom meniju, a na mobilnom
 Korisnici u Profilu imaju dugme **Kontaktiraj podršku** — otvara razgovor sa adminom (radi i prije potvrde emaila). Poruke stižu adminu u Poruke, a admin je svima označen kao „FaliJedan podrška“. Izmjene i brisanja se bilježe u log servera (`admin: …`).
 
 **Test faza i prijava bugova** (`src/components/feedback/Feedback.tsx`): nakon svake prijave (i jednom svakom već prijavljenom korisniku) iskače obavještenje da je aplikacija u testnoj fazi, sa dugmetom „Prijavi bug ili ideju“. Isti obrazac je stalno dostupan u bočnom meniju („Prijavi bug“) i u Profilu. Prijava stiže adminu kao poruka (🐞 bug / 💡 prijedlog), sa stranicom i vrstom uređaja; admin odgovara u istom razgovoru. Bez admin naloga ništa od ovoga se ne prikazuje.
+
+## Reklame (Google AdSense)
+
+Reklame su isključene dok se ne postave `ADSENSE_CLIENT` i `ADSENSE_SLOT`. Tada se pri buildu dodaju AdSense meta tag (potvrda sajta) i `/ads.txt`, CSP dozvoljava samo Googleove AdSense domene, a reklama se prikazuje na **dva mjesta**:
+- **Početna** — jedna, između „Tvoji naredni termini“ i „Termini u tvojoj blizini“;
+- **Istraži** — jedna, poslije 6. termina u listi.
+
+Nema reklama u chatu, terminu, profilu, prijavi ni admin panelu. Kartica sa oznakom „Reklama“ se pojavljuje tek kad Google stvarno ubaci reklamu — prije odobrenja sajta, kad nema reklame ili uz blokator reklama ne ostaje prazna kutija. Admin ne vidi reklame (klik na vlastite reklame krši pravila AdSense-a i može ugasiti nalog).
+
+1. [adsense.google.com](https://adsense.google.com) → dodaj sajt. Najbolje sa vlastitom domenom (npr. `falijedan.ba`).
+2. Vercel → Environment Variables: `ADSENSE_CLIENT=ca-pub-…` (Publisher ID iz AdSense → Account). Redeploy — time se objavljuju meta tag i `ads.txt` koje AdSense provjerava.
+3. Nakon odobrenja: AdSense → Ads → By ad unit → **Display ads** (responsive) → iz koda kopiraj `data-ad-slot` u `ADSENSE_SLOT`. Za reklamu koja izgleda kao kartica u listi napravi **In-feed ad** i kopiraj i `data-ad-layout-key` u `ADSENSE_LAYOUT_KEY`. Redeploy.
+4. AdSense → Privacy & messaging → poruka o pristanku za EU/UK posjetioce (Google je obavezno traži za te zemlje; CSP to već dozvoljava).
+
+Napomena: AdSense pregledava javno dostupan sadržaj, a FaliJedan je skoro sav iza prijave — odobrenje može biti odbijeno zbog „premalo sadržaja“. Pomaže javna stranica sa opisom aplikacije i politikom privatnosti (koja mora pomenuti Googleove kolačiće za reklame).
 
 ## Sigurnost
 

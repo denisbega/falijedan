@@ -8,6 +8,7 @@ import { SPORTS } from '../lib/sports';
 import { isActiveForMe, playerList, type PlayerListItem } from '../lib/selectors';
 import type { SportId } from '../lib/types';
 import {
+  AdSlot,
   AmbientGlow,
   EmptyState,
   GlassButton,
@@ -229,6 +230,9 @@ export function Home() {
           )}
         </section>
       </div>
+
+      {/* Reklama (ako je AdSense uključen) — jedna, između sekcija */}
+      <AdSlot className="mt-9" />
 
       {/* Termini u blizini */}
       <section className="mt-9" aria-labelledby="blizina">
