@@ -26,6 +26,28 @@ export interface User {
   needsVerification?: boolean;
   /** Samo u snimku: nalog je obrisan (prikazuje se kao "Obrisan korisnik") */
   deleted?: boolean;
+  /** Samo u snimku: administrator (FaliJedan podrška) — vidljivo svima, da znaju kome pišu */
+  admin?: boolean;
+}
+
+/** Korisnik u admin panelu (samo za administratore — sadrži email). */
+export interface AdminUser {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  avatar?: string | null;
+  city: string;
+  bio?: string;
+  createdAt: string;
+  verified: boolean;
+  onboarded: boolean;
+  hasPassword: boolean;
+  admin: boolean;
+  /** Termini koje je organizovao */
+  organized: number;
+  /** Prijave na tuđe termine (potvrđene, uključujući odigrane) */
+  joined: number;
 }
 
 export interface PlayerSport {

@@ -6,7 +6,7 @@
  * Izmjene se izvršavaju jedna po jedna (red čekanja u procesu + zaključavanje u bazi), pa nema trke
  * za zadnje mjesto u terminu, a keš se mijenja tek kad baza potvrdi upis.
  */
-import type { DB, User } from '../src/lib/types.ts';
+import type { AdminUser, DB, User } from '../src/lib/types.ts';
 import { createSeed, DEMO_USER_ID, rebaseSeed, SEED_VERSION } from '../src/lib/seed.ts';
 import { hasDemoData, purgeDemoData, roundCoord, runScheduledJobs } from '../src/lib/rules.ts';
 import { config, requireVerification } from './config.ts';
@@ -122,6 +122,39 @@ export const findUserByEmail = (email: string): User | undefined => state.users.
 export const db = () => storage;
 export const shutdownStorage = () => storage?.close();
 
+/**
+ * Administrator: email je u ADMIN_EMAILS i nalog je potvrđen — inače bi neko mogao registrovati
+ * admin email (dok ga vlasnik još nije zauzeo) i dobiti prava bez pristupa tom inboxu.
+ */
+export const isAdmin = (u: User | undefined): boolean => !!u?.email && config.adminEmails.has(u.email.toLowerCase()) && (u.verified || !requireVerification);
+
+/** Svi aktivni korisnici sa emailom i brojem termina — samo za admin panel. */
+export function adminUsers(s: DB = state): AdminUser[] {
+  const organized = new Map<string, number>();
+  const joined = new Map<string, number>();
+  for (const x of s.sessions) organized.set(x.organizerId, (organized.get(x.organizerId) ?? 0) + 1);
+  for (const p of s.sessionPlayers) if (p.role === 'player' && p.status === 'confirmed') joined.set(p.userId, (joined.get(p.userId) ?? 0) + 1);
+  return s.users
+    .filter((u) => !!u.email)
+    .map((u) => ({
+      id: u.id,
+      firstName: u.firstName,
+      lastName: u.lastName,
+      email: u.email!,
+      avatar: u.avatar,
+      city: u.city,
+      bio: u.bio,
+      createdAt: u.createdAt,
+      verified: u.verified,
+      onboarded: u.onboarded,
+      hasPassword: !!u.passwordHash,
+      admin: isAdmin(u),
+      organized: organized.get(u.id) ?? 0,
+      joined: joined.get(u.id) ?? 0,
+    }))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
 const MESSAGES_PER_THREAD = 300;
 
 /**
@@ -151,8 +184,9 @@ export function snapshotFor(userId: string): DB {
     currentUserId: userId,
     users: s.users.map((u) => {
       const { passwordHash, email, ...rest } = u;
-      if (u.id === userId) return { ...rest, email, hasPassword: !!passwordHash, needsVerification: requireVerification && !u.verified };
-      const pub = { ...rest, lat: roundCoord(rest.lat), lng: roundCoord(rest.lng) };
+      const admin = isAdmin(u) || undefined;
+      if (u.id === userId) return { ...rest, email, admin, hasPassword: !!passwordHash, needsVerification: requireVerification && !u.verified };
+      const pub = { ...rest, admin, lat: roundCoord(rest.lat), lng: roundCoord(rest.lng) };
       return email ? pub : { ...pub, bio: undefined, deleted: true };
     }),
     playerSports: s.playerSports,

@@ -24,6 +24,7 @@ const Messages = lazy(() => import('./screens/Messages').then((m) => ({ default:
 const Chat = lazy(() => import('./screens/Messages').then((m) => ({ default: m.ChatScreen })));
 const Notifications = lazy(() => import('./screens/Notifications').then((m) => ({ default: m.Notifications })));
 const Players = lazy(() => import('./screens/Players').then((m) => ({ default: m.Players })));
+const Admin = lazy(() => import('./screens/Admin').then((m) => ({ default: m.Admin })));
 const NotFound = lazy(() => import('./screens/NotFound').then((m) => ({ default: m.NotFound })));
 
 function Fallback() {
@@ -137,6 +138,7 @@ export function App() {
                   <Route path="profil" element={<Profile />} />
                   <Route path="profil/uredi" element={<EditProfile />} />
                   <Route path="igrac/:id" element={<Profile />} />
+                  <Route path="admin" element={<Admin />} />
                   <Route path="*" element={<NotFound />} />
                 </Route>
               </Routes>

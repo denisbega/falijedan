@@ -498,6 +498,23 @@ export function deleteAccount(d: DB, actorId: string) {
   Object.assign(me, { firstName: 'Obrisan', lastName: 'korisnik', email: undefined, passwordHash: null, avatar: null, bio: undefined, city: '', lat: 0, lng: 0, radiusKm: 10, verified: false, onboarded: false });
 }
 
+/** Admin: izmjena tuđeg profila (ulaz je već validiran u ruti). Obrisani nalozi se ne mogu mijenjati. */
+export function adminUpdateUser(d: DB, targetId: string, input: { firstName?: string; lastName?: string; email?: string; city?: string; bio?: string; verified?: boolean }) {
+  const u = d.users.find((x) => x.id === targetId);
+  if (!u || isDeletedUser(u)) throw new ApiError('Korisnik ne postoji ili je obrisan.', 404);
+  if (input.email !== undefined) {
+    const email = input.email.trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) throw new ApiError('Email adresa nije ispravna.');
+    if (d.users.some((x) => x.id !== u.id && x.email?.toLowerCase() === email)) throw new ApiError('Drugi nalog već koristi taj email.', 409);
+    u.email = email;
+  }
+  if (input.firstName !== undefined) u.firstName = input.firstName.trim().slice(0, 40);
+  if (input.lastName !== undefined) u.lastName = input.lastName.trim().slice(0, 40);
+  if (input.city !== undefined) u.city = input.city.trim().slice(0, 60);
+  if (input.bio !== undefined) u.bio = input.bio.trim().slice(0, 160);
+  if (input.verified !== undefined) u.verified = input.verified;
+}
+
 /** Izvoz ličnih podataka (pravo na pristup podacima): sve što aplikacija čuva o korisniku. */
 export function exportUserData(d: DB, userId: string) {
   const me = requireUser(d, userId);

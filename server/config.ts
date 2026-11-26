@@ -49,12 +49,23 @@ export const config = {
    * Brevo (besplatno 300/dan, radi i bez vlastite domene) ili Resend (besplatno 3000/mj, traži domenu).
    * Bez ključa: u razvoju se linkovi ispisuju u konzolu, a potvrda emaila se ne traži.
    */
+  // trim: vrijednosti zalijepljene u Vercel često imaju razmak/novi red na kraju (Brevo tada odbija ključ/pošiljaoca)
   email: {
-    brevoKey: process.env.BREVO_API_KEY ?? '',
-    resendKey: process.env.RESEND_API_KEY ?? '',
-    from: process.env.EMAIL_FROM ?? '',
-    fromName: process.env.EMAIL_FROM_NAME || 'FaliJedan',
+    brevoKey: (process.env.BREVO_API_KEY ?? '').trim(),
+    resendKey: (process.env.RESEND_API_KEY ?? '').trim(),
+    from: (process.env.EMAIL_FROM ?? '').trim(),
+    fromName: (process.env.EMAIL_FROM_NAME ?? '').trim() || 'FaliJedan',
   },
+  /**
+   * Super admin nalozi (emailovi, odvojeni zarezom): vide, uređuju i brišu sve korisnike, vide sve termine,
+   * a korisnici im pišu kao podršci. Prava se daju samo ovdje (ne u bazi) — niko ih ne može sam sebi dodijeliti.
+   */
+  adminEmails: new Set(
+    (process.env.ADMIN_EMAILS ?? '')
+      .split(/[,;\s]+/)
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean),
+  ),
   /** Cloudflare Turnstile (opciono): zaštita registracije od botova */
   turnstile: {
     siteKey: process.env.TURNSTILE_SITE_KEY ?? '',

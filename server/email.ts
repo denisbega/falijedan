@@ -42,9 +42,35 @@ export async function sendEmail(m: Mail): Promise<void> {
   }
   if (!res.ok) {
     // Odgovor servisa logujemo bez adrese primaoca i bez linka
-    console.error(`email: ${brevoKey ? 'Brevo' : 'Resend'} odbio slanje (${res.status}):`, (await res.text().catch(() => '')).slice(0, 300));
+    const body = (await res.text().catch(() => '')).slice(0, 300);
+    const hint = emailErrorHint(res.status, body, brevoKey);
+    console.error(`email: ${brevoKey ? 'Brevo' : 'Resend'} odbio slanje (${res.status}): ${body}${hint ? `\n  → ${hint}` : ''}`);
     throw new ApiError('Slanje emaila trenutno ne radi. Pokušaj ponovo za koji minut.', 503);
   }
+}
+
+/** Šta popraviti, za najčešće razloge odbijanja (Brevo/Resend) — ide u log servera. */
+export function emailErrorHint(status: number, body: string, brevoKey = ''): string {
+  const b = body.toLowerCase();
+  if (brevoKey) {
+    if (b.includes('unrecognised ip') || b.includes('unrecognized ip') || b.includes('authorised_ips'))
+      return 'Brevo blokira nepoznatu IP adresu (Vercel nema stalnu IP) → app.brevo.com/security/authorised_ips → isključi blokiranje nepoznatih IP adresa.';
+    if (status === 401 && brevoKey.startsWith('xsmtpsib-'))
+      return 'BREVO_API_KEY je SMTP ključ (xsmtpsib-…). Treba API ključ (xkeysib-…): Brevo → SMTP & API → API Keys → Generate a new API key.';
+    if (status === 401 || b.includes('key not found'))
+      return 'Brevo ne prepoznaje BREVO_API_KEY (pogrešan, obrisan ili nepotpun ključ). Napravi novi u Brevo → SMTP & API → API Keys, pa redeploy.';
+    if (b.includes('sender') && (b.includes('not valid') || b.includes('invalid')))
+      return 'EMAIL_FROM nije potvrđen pošiljalac u Brevo → Senders, Domains & Dedicated IPs → Senders → dodaj adresu i potvrdi je linkom iz emaila.';
+    if (b.includes('not yet activated') || b.includes('not activated') || b.includes('permission_denied'))
+      return 'Brevo nalog još nije aktiviran za slanje (transactional). Dovrši profil u Brevo ili piši njihovoj podršci da aktiviraju nalog.';
+  } else {
+    if (b.includes('domain is not verified') || b.includes('verify a domain'))
+      return 'Domena iz EMAIL_FROM nije potvrđena u Resend → Domains.';
+    if (b.includes('only send testing emails'))
+      return 'Resend bez potvrđene domene šalje samo na tvoju adresu — dodaj domenu u Resend → Domains (ili koristi Brevo).';
+    if (status === 401 || status === 403) return 'Resend ne prihvata RESEND_API_KEY — napravi novi ključ.';
+  }
+  return '';
 }
 
 /* ---------- Šabloni ---------- */

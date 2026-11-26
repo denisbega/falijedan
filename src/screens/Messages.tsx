@@ -131,7 +131,15 @@ export function ChatScreen() {
             <div className="min-w-0">
               <p className="truncate text-[16px] font-extrabold">{title}</p>
               <p className="truncate text-[12px] font-semibold text-fj-text-2">
-                {typingUser ? <span className="text-fj-green">kuca…</span> : sv ? `Grupni chat · ${thread.memberIds.length} ${plural(thread.memberIds.length, 'član', 'člana', 'članova')}` : 'Direktna poruka'}
+                {typingUser ? (
+                  <span className="text-fj-green">kuca…</span>
+                ) : sv ? (
+                  `Grupni chat · ${thread.memberIds.length} ${plural(thread.memberIds.length, 'član', 'člana', 'članova')}`
+                ) : other?.admin ? (
+                  <span className="text-fj-green">FaliJedan podrška</span>
+                ) : (
+                  'Direktna poruka'
+                )}
               </p>
             </div>
           </Link>

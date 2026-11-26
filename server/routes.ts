@@ -5,7 +5,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { config, emailEnabled, providers, requireVerification } from './config.ts';
-import { db, ensureFresh, etagFor, findUser, findUserByEmail, read, snapshotFor, transact } from './engine.ts';
+import { adminUsers, db, ensureFresh, etagFor, findUser, findUserByEmail, isAdmin, read, snapshotFor, transact } from './engine.ts';
 import { appleAuthUrl, appleCallback, currentUserId, endAllSessions, endSession, googleAuthUrl, googleCallback, memoryLimit, newEmailToken, peekEmailToken, rateLimit, startSession, trustDevice, trustedDevice, useEmailToken } from './auth.ts';
 import { resetPasswordMail, sendEmail, verifyEmailMail } from './email.ts';
 import { background } from './background.ts';
@@ -431,18 +431,25 @@ on('POST', '/api/sessions/:id/invite', async (ctx) => {
 });
 
 /* Poruke */
+// Podršci (adminu) može pisati i korisnik koji još nije potvrdio email — njemu pomoć najčešće i treba
+const isAdminThread = (threadId: string, userId: string) => {
+  const t = read().threads.find((x) => x.id === threadId);
+  return t?.kind === 'direct' && t.memberIds.some((id) => id !== userId && isAdmin(findUser(id)));
+};
+
 on('POST', '/api/threads/direct', async (ctx) => {
   const userId = await need(ctx);
-  requireVerified(userId);
   const b = v.shape(ctx.body, 'razgovor', ['userId']);
   const other = v.id(b.userId, 'igrač');
+  if (!isAdmin(findUser(other))) requireVerified(userId);
   const exists = read().threads.some((t) => t.kind === 'direct' && t.memberIds.includes(userId) && t.memberIds.includes(other));
-  if (!exists) await rateLimit('direct', userId, 30, 24 * HOUR); // novi razgovori sa nepoznatima: spam
+  // novi razgovori sa nepoznatima: spam (admin piše korisnicima bez ograničenja)
+  if (!exists && !isAdmin(findUser(userId))) await rateLimit('direct', userId, 30, 24 * HOUR);
   withSnapshot(ctx, userId, { threadId: await transact((d) => rules.openDirectThread(d, userId, other)) });
 });
 on('POST', '/api/threads/:id/messages', async (ctx) => {
   const userId = await need(ctx);
-  requireVerified(userId);
+  if (!isAdminThread(ctx.params[0], userId)) requireVerified(userId);
   const b = v.shape(ctx.body, 'poruka', ['text', 'sessionId']);
   const sessionId = b.sessionId == null ? undefined : v.id(b.sessionId, 'termin');
   const text = v.text(b.text ?? '', 'poruka', { max: v.LIMITS.message.max, multiline: true, optional: !!sessionId });
@@ -471,6 +478,55 @@ on('POST', '/api/notifications/:id/read', async (ctx) => {
   empty(ctx);
   await transact((d) => rules.markNotificationRead(d, userId, ctx.params[0]));
   withSnapshot(ctx, userId, null);
+});
+
+/* Admin panel (ADMIN_EMAILS): svi korisnici sa emailovima, izmjena i brisanje. Termine admin vidi iz običnog snimka. */
+async function needAdmin(ctx: Ctx): Promise<string> {
+  const id = await need(ctx);
+  if (!isAdmin(findUser(id))) throw new ApiError('Nemaš pristup.', 403);
+  return id;
+}
+
+on('GET', '/api/admin/users', async (ctx) => {
+  await needAdmin(ctx);
+  sendJson(ctx.res, 200, { result: adminUsers() });
+});
+
+on('POST', '/api/admin/users/:id', async (ctx) => {
+  const adminId = await needAdmin(ctx);
+  const target = ctx.params[0];
+  const b = v.shape(ctx.body, 'korisnik', ['firstName', 'lastName', 'email', 'city', 'bio', 'verified']);
+  const input = {
+    firstName: b.firstName === undefined ? undefined : v.personName(b.firstName, 'ime'),
+    lastName: b.lastName === undefined ? undefined : v.personName(b.lastName, 'prezime'),
+    email: b.email === undefined ? undefined : v.email(b.email),
+    city: b.city === undefined ? undefined : v.text(b.city, 'grad', { min: v.LIMITS.city.min, max: v.LIMITS.city.max }),
+    bio: b.bio === undefined ? undefined : v.text(b.bio, 'opis', { max: v.LIMITS.bio.max, optional: true }),
+    verified: b.verified === undefined ? undefined : v.bool(b.verified, 'potvrđen email'),
+  };
+  const before = findUser(target);
+  if (input.email && before?.email && input.email !== before.email.toLowerCase() && isAdmin(before))
+    throw new ApiError('Email admin naloga se ne mijenja ovdje — on je naveden u ADMIN_EMAILS.', 403);
+  await transact((d) => rules.adminUpdateUser(d, target, input));
+  console.log(`admin: ${adminId} izmijenio nalog ${target}`);
+  withSnapshot(ctx, adminId, adminUsers());
+});
+
+on('POST', '/api/admin/users/:id/delete', async (ctx) => {
+  const adminId = await needAdmin(ctx);
+  empty(ctx);
+  const target = ctx.params[0];
+  if (target === adminId) throw new ApiError('Svoj nalog brišeš u profilu: Uredi profil → Obriši nalog.');
+  const u = findUser(target);
+  if (!u || rules.isDeletedUser(u)) throw new ApiError('Korisnik ne postoji ili je već obrisan.', 404);
+  if (isAdmin(u)) throw new ApiError('Admin nalog se ne može obrisati — prvo ga ukloni iz ADMIN_EMAILS.', 403);
+  // Isto kao kad korisnik sam obriše nalog: lični podaci se brišu, budući termini otkazuju, sesije gase
+  await transact((d) => rules.deleteAccount(d, target));
+  await endAllSessions(target);
+  await db().identities.deleteForUser(target);
+  await db().tokens.deleteForUser(target);
+  console.log(`admin: ${adminId} obrisao nalog ${target}`);
+  withSnapshot(ctx, adminId, adminUsers());
 });
 
 /* ---------- Dispečer ---------- */

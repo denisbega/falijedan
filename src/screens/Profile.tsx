@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
-import { CalendarCheck, ChevronLeft, Download, LogOut, MessageCircle, MessageSquareQuote, Pencil, Share2, ShieldCheck, Trophy, UserX, UserPlus } from 'lucide-react';
+import { CalendarCheck, ChevronLeft, Download, LifeBuoy, LogOut, MessageCircle, MessageSquareQuote, Pencil, Share2, ShieldCheck, Trophy, UserX, UserPlus } from 'lucide-react';
 import { useDB, useInstallPrompt, useMe, useUserStats } from '../lib/hooks';
 import { formatRating, fullName, ocjene, termini, timeAgo } from '../lib/format';
 import { getLevel, getSport, RATING_KEYS, ratingLabel } from '../lib/sports';
@@ -39,6 +39,8 @@ export function Profile() {
   const [tab, setTab] = useState<SportId | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [invitee, setInvitee] = useState<PlayerListItem | null>(null);
+  // Podrška = admin nalog (ADMIN_EMAILS); adminu samom se dugme ne prikazuje
+  const support = me.admin ? null : db.users.find((u) => u.admin && !u.deleted) ?? null;
 
   const reviews = useMemo(() => {
     if (!user) return [];
@@ -96,11 +98,18 @@ export function Profile() {
               {user.city} · član od {year}.
             </p>
             {user.bio && <p className="mx-auto mt-3 max-w-xs text-[14px] text-fj-text-2">{user.bio}</p>}
-            {user.verified && (
-              <div className="mt-3 flex justify-center">
-                <GlassBadge tone="green" icon={<ShieldCheck className="size-3.5" aria-hidden />}>
-                  Verifikovan profil
-                </GlassBadge>
+            {(user.verified || user.admin) && (
+              <div className="mt-3 flex flex-wrap justify-center gap-2">
+                {user.admin && (
+                  <GlassBadge tone="green" icon={<LifeBuoy className="size-3.5" aria-hidden />}>
+                    FaliJedan podrška
+                  </GlassBadge>
+                )}
+                {user.verified && (
+                  <GlassBadge tone="green" icon={<ShieldCheck className="size-3.5" aria-hidden />}>
+                    Verifikovan profil
+                  </GlassBadge>
+                )}
               </div>
             )}
             <div className="mt-6 flex gap-3">
@@ -289,9 +298,30 @@ export function Profile() {
 
           {isMe && (
             <section className="mt-10 space-y-3" aria-label="Podešavanja">
+              {me.admin && (
+                <GlassButton to="/admin" icon={ShieldCheck} full>
+                  Admin panel
+                </GlassButton>
+              )}
               <GlassButton to="/moji-termini" variant="secondary" icon={CalendarCheck} full>
                 Moji termini
               </GlassButton>
+              {support && (
+                <GlassButton
+                  variant="secondary"
+                  icon={LifeBuoy}
+                  full
+                  onClick={async () => {
+                    try {
+                      navigate(`/poruke/${await openDirectThread(support.id)}`);
+                    } catch (e) {
+                      error(e);
+                    }
+                  }}
+                >
+                  Kontaktiraj podršku
+                </GlassButton>
+              )}
               {canInstall && (
                 <GlassButton variant="secondary" icon={Download} full onClick={() => install()}>
                   Instaliraj aplikaciju

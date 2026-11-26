@@ -1,8 +1,8 @@
 import { NavLink, useLocation } from 'react-router';
 import { motion } from 'framer-motion';
-import { CalendarCheck, Compass, House, MessageCircle, PanelLeftClose, PanelLeftOpen, Plus, Search, User, Users, type LucideIcon } from 'lucide-react';
+import { CalendarCheck, Compass, House, MessageCircle, PanelLeftClose, PanelLeftOpen, Plus, Search, ShieldCheck, User, Users, type LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { useUnread } from '../../lib/hooks';
+import { useMe, useUnread } from '../../lib/hooks';
 import { GlassButton } from '../ui';
 import { Logo } from './Logo';
 
@@ -88,9 +88,13 @@ export function GlassBottomNav() {
   );
 }
 
+const adminItem: NavItem = { to: '/admin', label: 'Admin panel', icon: ShieldCheck };
+
 /** Plutajući stakleni sidebar (tablet: sklopljen, desktop: raširen). */
 export function GlassSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const { messages } = useUnread();
+  const me = useMe();
+  const items = me?.admin ? [...desktopItems, adminItem] : desktopItems;
   return (
     <aside
       aria-label="Bočna navigacija"
@@ -103,7 +107,7 @@ export function GlassSidebar({ collapsed, onToggle }: { collapsed: boolean; onTo
         <Logo compact={collapsed} />
       </div>
       <nav className="flex flex-1 flex-col gap-1">
-        {desktopItems.map((item) => (
+        {items.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

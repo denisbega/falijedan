@@ -2,7 +2,7 @@
  * API klijent — svaka akcija ide na server (server/routes.ts), koji provodi pravila
  * i vraća svjež snimak podataka. Komponente koriste samo ove funkcije.
  */
-import type { DB } from './types';
+import type { AdminUser, DB } from './types';
 import { store } from './store';
 import type { CreateSessionInput, RatingEntry, SportProfileInput } from './rules';
 
@@ -135,6 +135,23 @@ export function markThreadRead(threadId: string) {
   if (!last || (read && read >= last.createdAt)) return;
   void call(`/api/threads/${encodeURIComponent(threadId)}/read`).catch(() => undefined);
 }
+
+/* ============================ ADMIN ============================ */
+
+export async function getAdminUsers(): Promise<AdminUser[]> {
+  let res: Response;
+  try {
+    res = await fetch('/api/admin/users', { credentials: 'same-origin', cache: 'no-store' });
+  } catch {
+    throw new ApiError('Nema veze sa serverom. Provjeri internet i pokušaj ponovo.', 0);
+  }
+  const data = (await res.json().catch(() => ({}))) as { result?: AdminUser[]; error?: string };
+  if (!res.ok) throw new ApiError(data.error ?? 'Greška na serveru. Pokušaj ponovo.', res.status);
+  return data.result ?? [];
+}
+export const adminUpdateUser = (userId: string, input: { firstName?: string; lastName?: string; email?: string; city?: string; bio?: string; verified?: boolean }) =>
+  call<AdminUser[]>(`/api/admin/users/${encodeURIComponent(userId)}`, input);
+export const adminDeleteUser = (userId: string) => call<AdminUser[]>(`/api/admin/users/${encodeURIComponent(userId)}/delete`);
 
 /* ============================ OBAVJEŠTENJA ============================ */
 

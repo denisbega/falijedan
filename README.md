@@ -37,6 +37,7 @@ Kopiraj `.env.example` u `.env`. Najvažnije:
 | `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` | opciono: Cloudflare Turnstile na registraciji (zaštita od botova) |
 | `TRUST_PROXY` | vlastiti server iza reverse proxyja: IP klijenta iz `X-Forwarded-For` |
 | `BREVO_API_KEY` ili `RESEND_API_KEY` + `EMAIL_FROM` | slanje emaila: potvrda naloga i nova lozinka (vidi „Email“) |
+| `ADMIN_EMAILS` | emailovi super admin naloga, odvojeni zarezom (vidi „Admin panel“) |
 | `DATA_DIR` | folder SQLite baze (podrazumijevano `server/data`) |
 | `GOOGLE_CLIENT_ID/SECRET` | uključuje „Nastavi sa Google“ (redirect URI: `{PUBLIC_URL}/api/auth/google/callback`) |
 | `APPLE_CLIENT_ID/TEAM_ID/KEY_ID/PRIVATE_KEY` | uključuje „Nastavi sa Apple“ (return URL: `{PUBLIC_URL}/api/auth/apple/callback`, mora https) |
@@ -95,9 +96,27 @@ Emailovi idu preko **Brevo** (besplatno 300/dan, radi i bez vlastite domene) ili
 2. **SMTP & API → API Keys → Generate a new API key**.
 3. Vercel → Settings → Environment Variables: `BREVO_API_KEY`, `EMAIL_FROM` (adresa iz koraka 1), opciono `EMAIL_FROM_NAME`. Redeploy.
 
+**Email ne stiže?** Reset lozinke se šalje u pozadini, pa korisnik uvijek vidi „poslano“ — razlog greške je samo u logu (Vercel → projekat → Logs, traži `email:`). Najčešće:
+- **Brevo → Security → Authorised IPs**: Brevo blokira API pozive sa nepoznatih IP adresa, a Vercel nema stalnu IP → isključi blokiranje.
+- `BREVO_API_KEY` mora biti **API ključ** (`xkeysib-…`), ne SMTP ključ (`xsmtpsib-…`).
+- `EMAIL_FROM` mora biti dodan i **potvrđen** u Brevo → Senders (samo adresa, bez imena i navodnika).
+- Nakon izmjene varijabli na Vercelu treba **Redeploy**.
+
+Lokalna provjera: stavi `BREVO_API_KEY` i `EMAIL_FROM` u `.env`, pa `npm run email:test -- tvoja@adresa.com` (provjeri ključ i pošiljaoca, pa pošalje probni email).
+
 Bez vlastite domene Brevo pošiljaoca prepisuje u `…@brevosend.com` (Gmail/Yahoo zahtijevaju autentifikovanu domenu), pa email češće završi u spamu. Sa domenom (npr. `falijedan.ba`, ~10–20 €/god.) dodaj je u Brevo → Domains (DKIM/DMARC zapisi) ili pređi na Resend.
 
 Kad je email podešen: nova registracija dobija link za potvrdu (48 h); dok email nije potvrđen, korisnik ne može da se prijavljuje na termine, organizuje, šalje poruke ni ocjenjuje (vidi baner sa „Pošalji ponovo“). „Zaboravljena lozinka?“ šalje jednokratan link (30 min); nova lozinka odjavljuje sve druge uređaje. Bez podešenog emaila (lokalni razvoj) linkovi se ispisuju u konzoli servera.
+
+## Admin panel
+
+Super admin je običan nalog čiji je email naveden u `ADMIN_EMAILS` (Vercel → Settings → Environment Variables, pa Redeploy). Prava se daju samo tu, ne u bazi, pa ih niko ne može sam sebi dodijeliti. Nalog mora imati potvrđen email (dok je potvrda uključena) — tako niko ne može registrovati admin email prije vlasnika.
+
+Admin dobija stranicu **Admin panel** (`/admin`; u bočnom meniju, a na mobilnom u Profilu):
+- **Korisnici** — svi nalozi sa emailom, gradom, datumom registracije i brojem termina; pretraga i filteri (novi, nepotvrđeni, admini). Može urediti ime, prezime, email, grad, opis i potvrdu emaila, poslati poruku ili obrisati nalog (isto kao kad korisnik sam obriše nalog: termini koje organizuje se otkazuju, sesije se gase). Admin nalog se ne može obrisati niti mu se ovdje mijenja email.
+- **Termini** — svi termini (nadolazeći, završeni, otkazani) sa organizatorom i popunjenošću; klik otvara termin.
+
+Korisnici u Profilu imaju dugme **Kontaktiraj podršku** — otvara razgovor sa adminom (radi i prije potvrde emaila). Poruke stižu adminu u Poruke, a admin je svima označen kao „FaliJedan podrška“. Izmjene i brisanja se bilježe u log servera (`admin: …`).
 
 ## Sigurnost
 
