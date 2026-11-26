@@ -63,11 +63,27 @@ export async function getProviders(): Promise<Providers> {
   return { google: false, apple: false, demo: false };
 }
 
-export const signUp = (input: { firstName: string; lastName: string; email: string; password: string; turnstileToken?: string }) => call('/api/auth/register', input);
-export const signIn = (email: string, password: string) => call('/api/auth/login', { email, password });
-export const signInDemo = () => call('/api/auth/demo');
+/** Nakon prijave se ponovo prikazuje obavještenje o test fazi (components/feedback/Feedback.tsx). */
+export const JUST_LOGGED_IN_KEY = 'falijedan:upravo-prijavljen';
+function markLogin() {
+  try {
+    localStorage.setItem(JUST_LOGGED_IN_KEY, '1');
+  } catch {
+    /* privatni režim */
+  }
+}
+const loggedIn = async <T>(p: Promise<T>) => {
+  const r = await p;
+  markLogin();
+  return r;
+};
+
+export const signUp = (input: { firstName: string; lastName: string; email: string; password: string; turnstileToken?: string }) => loggedIn(call('/api/auth/register', input));
+export const signIn = (email: string, password: string) => loggedIn(call('/api/auth/login', { email, password }));
+export const signInDemo = () => loggedIn(call('/api/auth/demo'));
 /** Google / Apple: preusmjerenje na OAuth (server vraća korisnika nazad u aplikaciju). */
 export function signInWithProvider(provider: 'google' | 'apple') {
+  markLogin();
   window.location.href = `/api/auth/${provider}`;
 }
 export async function signOut() {
@@ -83,7 +99,7 @@ export async function signOut() {
 export const verifyEmail = (token: string) => call<{ verified: boolean }>('/api/auth/verify', { token });
 export const resendVerification = () => call<{ sent: boolean; verified?: boolean }>('/api/auth/verify/resend');
 export const forgotPassword = (email: string) => call<{ sent: boolean }>('/api/auth/forgot', { email });
-export const resetPassword = (token: string, password: string) => call<{ userId: string }>('/api/auth/reset', { token, password });
+export const resetPassword = (token: string, password: string) => loggedIn(call<{ userId: string }>('/api/auth/reset', { token, password }));
 
 /* ============================ NALOG ============================ */
 

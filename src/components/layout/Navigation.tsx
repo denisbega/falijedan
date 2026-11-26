@@ -1,6 +1,7 @@
 import { NavLink, useLocation } from 'react-router';
 import { motion } from 'framer-motion';
-import { CalendarCheck, Compass, House, MessageCircle, PanelLeftClose, PanelLeftOpen, Plus, Search, ShieldCheck, User, Users, type LucideIcon } from 'lucide-react';
+import { Bug, CalendarCheck, Compass, House, MessageCircle, PanelLeftClose, PanelLeftOpen, Plus, Search, ShieldCheck, User, Users, type LucideIcon } from 'lucide-react';
+import { useFeedback } from '../feedback/Feedback';
 import { cn } from '../../lib/utils';
 import { useMe, useUnread } from '../../lib/hooks';
 import { GlassButton } from '../ui';
@@ -94,6 +95,7 @@ const adminItem: NavItem = { to: '/admin', label: 'Admin panel', icon: ShieldChe
 export function GlassSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const { messages } = useUnread();
   const me = useMe();
+  const feedback = useFeedback();
   const items = me?.admin ? [...desktopItems, adminItem] : desktopItems;
   return (
     <aside
@@ -133,6 +135,20 @@ export function GlassSidebar({ collapsed, onToggle }: { collapsed: boolean; onTo
             )}
           </NavLink>
         ))}
+        {feedback.available && (
+          <button
+            type="button"
+            onClick={() => feedback.open()}
+            title={collapsed ? 'Prijavi bug ili ideju' : undefined}
+            className={cn(
+              'flex min-h-12 items-center gap-3 rounded-[16px] border border-transparent px-3.5 text-[14px] font-bold text-fj-text-2 transition-colors hover:bg-white/[0.05] hover:text-white',
+              collapsed && 'justify-center px-0',
+            )}
+          >
+            <Bug className="size-5 shrink-0" strokeWidth={2.2} aria-hidden />
+            {collapsed ? <span className="sr-only">Prijavi bug ili ideju</span> : <span className="truncate">Prijavi bug</span>}
+          </button>
+        )}
       </nav>
 
       {!collapsed ? (

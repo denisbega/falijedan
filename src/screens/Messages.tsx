@@ -174,7 +174,7 @@ export function ChatScreen() {
                     {showName && <p className="mb-1 ml-1 text-[12px] font-bold text-fj-text-2">{sender?.firstName}</p>}
                     <div
                       className={cn(
-                        'rounded-[20px] px-4 py-2.5 text-[15px] leading-snug',
+                        'whitespace-pre-line wrap-break-word rounded-[20px] px-4 py-2.5 text-[15px] leading-snug',
                         mine ? 'rounded-br-[6px] bg-fj-green font-semibold text-fj-on-green shadow-[0_6px_18px_rgba(32,196,90,0.25)]' : 'glass rounded-bl-[6px] text-white',
                       )}
                     >

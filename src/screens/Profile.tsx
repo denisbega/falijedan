@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { motion } from 'framer-motion';
-import { CalendarCheck, ChevronLeft, Download, LifeBuoy, LogOut, MessageCircle, MessageSquareQuote, Pencil, Share2, ShieldCheck, Trophy, UserX, UserPlus } from 'lucide-react';
+import { Bug, CalendarCheck, ChevronLeft, Download, LifeBuoy, LogOut, MessageCircle, MessageSquareQuote, Pencil, Share2, ShieldCheck, Trophy, UserX, UserPlus } from 'lucide-react';
 import { useDB, useInstallPrompt, useMe, useUserStats } from '../lib/hooks';
 import { formatRating, fullName, ocjene, termini, timeAgo } from '../lib/format';
 import { getLevel, getSport, RATING_KEYS, ratingLabel } from '../lib/sports';
@@ -24,6 +24,7 @@ import {
   useToast,
 } from '../components/ui';
 import { InviteModal } from '../components/player/PlayerCard';
+import { useFeedback } from '../components/feedback/Feedback';
 
 export function Profile() {
   const params = useParams();
@@ -41,6 +42,7 @@ export function Profile() {
   const [invitee, setInvitee] = useState<PlayerListItem | null>(null);
   // Podrška = admin nalog (ADMIN_EMAILS); adminu samom se dugme ne prikazuje
   const support = me.admin ? null : db.users.find((u) => u.admin && !u.deleted) ?? null;
+  const feedback = useFeedback();
 
   const reviews = useMemo(() => {
     if (!user) return [];
@@ -306,6 +308,11 @@ export function Profile() {
               <GlassButton to="/moji-termini" variant="secondary" icon={CalendarCheck} full>
                 Moji termini
               </GlassButton>
+              {feedback.available && (
+                <GlassButton variant="secondary" icon={Bug} full onClick={() => feedback.open()}>
+                  Prijavi bug ili ideju
+                </GlassButton>
+              )}
               {support && (
                 <GlassButton
                   variant="secondary"

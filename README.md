@@ -118,6 +118,8 @@ Admin dobija stranicu **Admin panel** (`/admin`; u bočnom meniju, a na mobilnom
 
 Korisnici u Profilu imaju dugme **Kontaktiraj podršku** — otvara razgovor sa adminom (radi i prije potvrde emaila). Poruke stižu adminu u Poruke, a admin je svima označen kao „FaliJedan podrška“. Izmjene i brisanja se bilježe u log servera (`admin: …`).
 
+**Test faza i prijava bugova** (`src/components/feedback/Feedback.tsx`): nakon svake prijave (i jednom svakom već prijavljenom korisniku) iskače obavještenje da je aplikacija u testnoj fazi, sa dugmetom „Prijavi bug ili ideju“. Isti obrazac je stalno dostupan u bočnom meniju („Prijavi bug“) i u Profilu. Prijava stiže adminu kao poruka (🐞 bug / 💡 prijedlog), sa stranicom i vrstom uređaja; admin odgovara u istom razgovoru. Bez admin naloga ništa od ovoga se ne prikazuje.
+
 ## Sigurnost
 
 - **Prijava:** lozinke scrypt (N=2^15, r=8, p=3 — OWASP), najmanje 8 znakova, česte lozinke odbijene; stari heševi se nadograđuju pri prijavi. Sesije: nasumični token (256 bit), u bazi samo SHA-256 heš; kolačić `__Host-fj_session` (HttpOnly, Secure, SameSite=Lax) na https; nova prijava ukida stari token; odjava i brisanje naloga ukidaju sesije odmah na svim instancama.
