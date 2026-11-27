@@ -52,22 +52,3 @@ export function ratingLabel(key: RatingKey, sport?: SportId): string {
       return 'Kondicija';
   }
 }
-
-export interface CityDef {
-  name: string;
-  lat: number;
-  lng: number;
-}
-export const CITIES: CityDef[] = [
-  { name: 'Bijeljina', lat: 44.7569, lng: 19.2144 },
-  { name: 'Brčko', lat: 44.8727, lng: 18.8106 },
-  { name: 'Zvornik', lat: 44.3863, lng: 19.1028 },
-  { name: 'Tuzla', lat: 44.5384, lng: 18.6763 },
-  { name: 'Banja Luka', lat: 44.7722, lng: 17.191 },
-  { name: 'Sarajevo', lat: 43.8563, lng: 18.4131 },
-  { name: 'Mostar', lat: 43.3438, lng: 17.8078 },
-  { name: 'Doboj', lat: 44.7314, lng: 18.0844 },
-  { name: 'Šabac', lat: 44.7489, lng: 19.6908 },
-  { name: 'Novi Sad', lat: 45.2671, lng: 19.8335 },
-  { name: 'Beograd', lat: 44.7866, lng: 20.4489 },
-];

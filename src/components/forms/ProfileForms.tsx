@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Check, LocateFixed, MapPin } from 'lucide-react';
+import { Check, LocateFixed, MapPin, Search, X } from 'lucide-react';
 import { cn, haversineKm } from '../../lib/utils';
-import { ANY_POSITION, CITIES, LEVELS, SPORTS, getSport } from '../../lib/sports';
+import { ANY_POSITION, LEVELS, SPORTS, getSport } from '../../lib/sports';
+import { CITIES, POPULAR_CITIES, findCity, searchCities, type CityDef } from '../../lib/cities';
 import type { SportProfileInput } from '../../lib/api';
 import type { SportId } from '../../lib/types';
-import { GlassChip, GlassTabs, LevelBars, RangeField, SportIcon } from '../ui';
+import { GlassChip, GlassInput, GlassTabs, LevelBars, RangeField, SportIcon } from '../ui';
 
 /** Mreža sportova (više izbora). */
 export function SportPicker({ value, onChange }: { value: SportId[]; onChange: (v: SportId[]) => void }) {
@@ -104,6 +105,15 @@ export interface CityValue {
 export function CityRadiusPicker({ value, onChange }: { value: CityValue; onChange: (v: CityValue) => void }) {
   const [locating, setLocating] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+
+  const searching = query.trim() !== '';
+  const current = findCity(value.city);
+  const shown = searching ? searchCities(query) : current && !POPULAR_CITIES.includes(current) ? [current, ...POPULAR_CITIES] : POPULAR_CITIES;
+  const pick = (c: CityDef) => {
+    onChange({ ...value, city: c.name, lat: c.lat, lng: c.lng });
+    setQuery('');
+  };
 
   const locate = () => {
     if (!('geolocation' in navigator)) return setGeoError('Uređaj ne podržava lokaciju.');
@@ -136,14 +146,39 @@ export function CityRadiusPicker({ value, onChange }: { value: CityValue; onChan
       </button>
       {geoError && <p className="mt-2 text-[13px] font-semibold text-fj-warning">{geoError}</p>}
 
-      <p className="label-caps mb-2.5 mt-6 text-fj-text-2">Ili izaberi grad</p>
-      <div className="flex flex-wrap gap-2">
-        {CITIES.map((c) => (
-          <GlassChip key={c.name} selected={value.city === c.name} onClick={() => onChange({ ...value, city: c.name, lat: c.lat, lng: c.lng })} icon={value.city === c.name ? <MapPin className="size-4" aria-hidden /> : undefined}>
+      <GlassInput
+        className="mt-6"
+        label="Ili izaberi grad"
+        icon={Search}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+          if (shown[0] && searching) pick(shown[0]);
+        }}
+        placeholder="Pretraži grad — npr. Tuzla, Niš…"
+        autoComplete="off"
+        enterKeyHint="search"
+        hint={searching ? undefined : `${CITIES.length} gradova iz BiH i Srbije — ukucaj naziv.`}
+        suffix={
+          searching && (
+            <button type="button" onClick={() => setQuery('')} aria-label="Obriši pretragu" className="-mr-2 grid size-10 shrink-0 place-items-center rounded-full text-fj-text-2 hover:text-white">
+              <X className="size-4" aria-hidden />
+            </button>
+          )
+        }
+      />
+      <div className="mt-3 flex flex-wrap gap-2" aria-live="polite">
+        {shown.map((c) => (
+          <GlassChip key={c.name} selected={value.city === c.name} onClick={() => pick(c)} icon={value.city === c.name ? <MapPin className="size-4" aria-hidden /> : undefined}>
             {c.name}
           </GlassChip>
         ))}
-        {value.city === 'Moja lokacija' && (
+        {searching && shown.length === 0 && (
+          <p className="text-[13px] font-semibold text-fj-text-2">Nema tog grada na listi — probaj „Koristi moju lokaciju“.</p>
+        )}
+        {!searching && value.city === 'Moja lokacija' && (
           <GlassChip selected icon={<LocateFixed className="size-4" aria-hidden />}>
             Moja lokacija
           </GlassChip>

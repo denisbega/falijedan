@@ -4,7 +4,8 @@
  * ako pravilo nije ispunjeno, baca ApiError i transakcija se odbacuje.
  */
 import type { AppNotification, DB, Level, NotificationType, RatingKey, Session, SportId, User } from './types.ts';
-import { ANY_POSITION, CITIES, LEVELS, getSport, isSportId } from './sports.ts';
+import { ANY_POSITION, LEVELS, getSport, isSportId } from './sports.ts';
+import { DEFAULT_CITY } from './cities.ts';
 import { fullName, igraci, relativeDay, timeHM, untilLabel } from './format.ts';
 import { haversineKm, uid } from './utils.ts';
 import { ApiError } from './errors.ts';
@@ -136,7 +137,7 @@ export function createUser(
   if (!input.relaxed && lastName.length < 2) throw new ApiError('Unesi prezime.');
   if (!EMAIL_RE.test(email)) throw new ApiError('Email adresa nije ispravna.');
   if (d.users.some((u) => u.email?.toLowerCase() === email)) throw new ApiError('Nalog sa ovim emailom već postoji. Prijavi se.', 409);
-  const city = CITIES[0];
+  const city = DEFAULT_CITY;
   const user: User = {
     id: uid('u'),
     firstName: firstName.slice(0, 40),
