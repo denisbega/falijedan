@@ -20,6 +20,8 @@ export interface User {
   verified: boolean;
   onboarded: boolean;
   bio?: string;
+  /** Koje email obavještenja korisnik prima (nedostaje = podrazumijevano, vidi emailPrefsOf). Vidi ih samo on. */
+  emailPrefs?: EmailPrefs;
   /** Samo u snimku za samog korisnika: da li nalog ima lozinku (ne čuva se u bazi) */
   hasPassword?: boolean;
   /** Samo u snimku za samog korisnika: email još nije potvrđen, a potvrda je obavezna */
@@ -28,6 +30,13 @@ export interface User {
   deleted?: boolean;
   /** Samo u snimku: administrator (FaliJedan podrška) — vidljivo svima, da znaju kome pišu */
   admin?: boolean;
+}
+
+/** Email obavještenja po vrsti: pozivi i poruke, promjene na mojim terminima, novi termini u blizini. */
+export interface EmailPrefs {
+  messages?: boolean;
+  sessions?: boolean;
+  nearby?: boolean;
 }
 
 /** Korisnik u admin panelu (samo za administratore — sadrži email). */

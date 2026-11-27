@@ -36,7 +36,8 @@ Kopiraj `.env.example` u `.env`. Najvažnije:
 | `DATABASE_SCHEMA` / `DATABASE_SSL` / `DATABASE_POOL_MAX` | šema (`falijedan`), SSL (`require`), broj konekcija (`5`) |
 | `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` | opciono: Cloudflare Turnstile na registraciji (zaštita od botova) |
 | `TRUST_PROXY` | vlastiti server iza reverse proxyja: IP klijenta iz `X-Forwarded-For` |
-| `BREVO_API_KEY` ili `RESEND_API_KEY` + `EMAIL_FROM` | slanje emaila: potvrda naloga i nova lozinka (vidi „Email“) |
+| `BREVO_API_KEY` ili `RESEND_API_KEY` + `EMAIL_FROM` | slanje emaila: potvrda naloga, nova lozinka i obavještenja (vidi „Email“) |
+| `NOTIFY_EMAIL_DAILY_LIMIT` | najviše email obavještenja dnevno za cijelu aplikaciju (podrazumijevano `200`, `0` = isključeno) |
 | `ADMIN_EMAILS` | emailovi super admin naloga, odvojeni zarezom (vidi „Admin panel“) |
 | `ADSENSE_CLIENT` + `ADSENSE_SLOT` (+ `ADSENSE_LAYOUT_KEY`) | Google AdSense reklame (vidi „Reklame“); bez njih nema reklama |
 | `DATA_DIR` | folder SQLite baze (podrazumijevano `server/data`) |
@@ -89,7 +90,7 @@ Framework, build i install komanda su u `vercel.json` — u Vercel podešavanjim
 
 **Alternativa — stalni Node server** (VPS, Render, Railway…): `npm run build && npm start`; tada radi i SSE realtime.
 
-## Email (potvrda naloga, nova lozinka)
+## Email (potvrda naloga, nova lozinka, obavještenja)
 
 Emailovi idu preko **Brevo** (besplatno 300/dan, radi i bez vlastite domene) ili **Resend** (besplatno 3.000/mj, traži domenu) — bez dodatnih biblioteka, preko HTTP API-ja.
 
@@ -108,6 +109,13 @@ Lokalna provjera: stavi `BREVO_API_KEY` i `EMAIL_FROM` u `.env`, pa `npm run ema
 Bez vlastite domene Brevo pošiljaoca prepisuje u `…@brevosend.com` (Gmail/Yahoo zahtijevaju autentifikovanu domenu), pa email češće završi u spamu. Sa domenom (npr. `falijedan.ba`, ~10–20 €/god.) dodaj je u Brevo → Domains (DKIM/DMARC zapisi) ili pređi na Resend.
 
 Kad je email podešen: nova registracija dobija link za potvrdu (48 h); dok email nije potvrđen, korisnik ne može da se prijavljuje na termine, organizuje, šalje poruke ni ocjenjuje (vidi baner sa „Pošalji ponovo“). „Zaboravljena lozinka?“ šalje jednokratan link (30 min); nova lozinka odjavljuje sve druge uređaje. Bez podešenog emaila (lokalni razvoj) linkovi se ispisuju u konzoli servera.
+
+**Email obavještenja.** Uz obavještenje u aplikaciji, email stiže i za:
+- **Pozivi i poruke:** poziv na termin; nova direktna poruka — jedan email po nizu nepročitanih poruka, i ne ako je primalac čitao taj razgovor u zadnjih 10 minuta. Grupni razgovor termina ne šalje emailove.
+- **Moji termini:** podsjetnik 2 h prije termina, otkazan termin, mjesto sa liste čekanja, uklanjanje iz ekipe.
+- **Novi termini u blizini:** isključeno dok ga korisnik sam ne uključi; najviše 3 dnevno.
+
+Korisnik bira vrste u **Uredi profil → Email obavještenja** (link je u dnu svakog emaila). Emailovi idu samo na potvrđene adrese, najviše 20 po korisniku dnevno, a za cijelu aplikaciju najviše `NOTIFY_EMAIL_DAILY_LIMIT` (podrazumijevano 200) — da ostatak Brevo kvote (300/dan) ostane za potvrdu naloga i novu lozinku. Prijave/odjave na termin i ocjenjivanje ostaju samo u aplikaciji.
 
 ## Admin panel
 

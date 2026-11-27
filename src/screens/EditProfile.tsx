@@ -6,7 +6,8 @@ import { deleteAccount, downloadMyData, saveProfile, type SportProfileInput } fr
 import { LEVELS } from '../lib/sports';
 import { LIMITS } from '../lib/validation';
 import type { SportId } from '../lib/types';
-import { GlassButton, GlassCard, GlassInput, GlassModal, GlassTextarea, Page, PageHeader, PasswordInput, useToast } from '../components/ui';
+import { emailPrefsOf } from '../lib/notifications';
+import { GlassButton, GlassCard, GlassInput, GlassModal, GlassSwitch, GlassTextarea, Page, PageHeader, PasswordInput, useToast } from '../components/ui';
 import { CityRadiusPicker, SportLevelEditor, SportPicker, type CityValue } from '../components/forms/ProfileForms';
 
 export function EditProfile() {
@@ -20,6 +21,7 @@ export function EditProfile() {
   const [sports, setSports] = useState<SportProfileInput[]>(() => db.playerSports.filter((p) => p.userId === me.id).map(({ sport, level, positions }) => ({ sport, level, positions })));
   const [busy, setBusy] = useState(false);
   const [loc, setLoc] = useState<CityValue>({ city: me.city, lat: me.lat, lng: me.lng, radiusKm: me.radiusKm });
+  const [emailPrefs, setEmailPrefs] = useState(() => emailPrefsOf(me));
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [confirm, setConfirm] = useState('');
   const [password, setPassword] = useState('');
@@ -31,7 +33,7 @@ export function EditProfile() {
   const save = async () => {
     setBusy(true);
     try {
-      await saveProfile({ firstName, lastName, bio, sports, ...loc });
+      await saveProfile({ firstName, lastName, bio, sports, ...loc, emailPrefs });
       toast({ title: 'Profil je sačuvan' });
       navigate('/profil');
     } catch (e) {
@@ -76,6 +78,30 @@ export function EditProfile() {
         <section>
           <h2 className="mb-3 text-[19px] font-extrabold">Grad i radijus</h2>
           <CityRadiusPicker value={loc} onChange={setLoc} />
+        </section>
+        <section>
+          <h2 className="mb-3 text-[19px] font-extrabold">Email obavještenja</h2>
+          <GlassCard className="divide-y divide-white/10 px-5 py-2">
+            <GlassSwitch
+              label="Pozivi i poruke"
+              description="Kad te neko pozove na termin ili ti pošalje poruku."
+              checked={emailPrefs.messages}
+              onChange={(messages) => setEmailPrefs({ ...emailPrefs, messages })}
+            />
+            <GlassSwitch
+              label="Moji termini"
+              description="Podsjetnik prije termina, otkazan termin, mjesto sa liste čekanja."
+              checked={emailPrefs.sessions}
+              onChange={(sessions) => setEmailPrefs({ ...emailPrefs, sessions })}
+            />
+            <GlassSwitch
+              label="Novi termini u blizini"
+              description="Kad nekome fali igrač za tvoj sport u tvom radijusu (najviše 3 dnevno)."
+              checked={emailPrefs.nearby}
+              onChange={(nearby) => setEmailPrefs({ ...emailPrefs, nearby })}
+            />
+          </GlassCard>
+          {me.needsVerification && <p className="mt-2 text-[13px] font-semibold text-fj-warning">Emailovi stižu tek kad potvrdiš email adresu.</p>}
         </section>
         <div className="flex gap-3">
           <GlassButton variant="secondary" className="flex-1" onClick={() => navigate('/profil')}>

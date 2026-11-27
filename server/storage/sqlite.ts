@@ -24,6 +24,9 @@ export class SqliteStorage implements StorageAdapter {
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
     for (const s of SPECS) {
       this.db.exec(`CREATE TABLE IF NOT EXISTS ${s.table} (${s.cols.map((c) => `${c.c} ${sqlType[c.k]}`).join(', ')}, PRIMARY KEY (${s.pk.join(', ')}))`);
+      // Kolone dodate nakon što je tabela napravljena (CREATE TABLE IF NOT EXISTS ih ne dodaje)
+      const existing = new Set((this.db.prepare(`PRAGMA table_info(${s.table})`).all() as { name: string }[]).map((r) => r.name));
+      for (const c of s.cols) if (!existing.has(c.c)) this.db.exec(`ALTER TABLE ${s.table} ADD COLUMN ${c.c} ${sqlType[c.k]}`);
       for (const i of s.indexes ?? []) this.db.exec(`CREATE ${i.unique ? 'UNIQUE ' : ''}INDEX IF NOT EXISTS ${i.name} ON ${s.table} (${i.on})`);
       const names = s.cols.map((c) => c.c);
       this.stmts.set(s.table, {

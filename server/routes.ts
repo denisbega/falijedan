@@ -13,13 +13,14 @@ import { hashPassword, needsRehash, verifyPassword } from './passwords.ts';
 import { verifyTurnstile } from './turnstile.ts';
 import { attachClient } from './realtime.ts';
 import { afterDirectMessage, afterSessionCreated } from './bots.ts';
+import { emailDirectMessage, startEmailNotifications } from './notify-mail.ts';
 import { apiHeaders } from './headers.ts';
 import * as rules from '../src/lib/rules.ts';
 import { ApiError } from '../src/lib/rules.ts';
 import * as v from '../src/lib/validation.ts';
 import { ANY_POSITION, LEVELS, SPORTS, getSport } from '../src/lib/sports.ts';
 import { DEMO_USER_ID } from '../src/lib/seed.ts';
-import type { Level, RatingKey, SportId } from '../src/lib/types.ts';
+import type { EmailPrefs, Level, RatingKey, SportId } from '../src/lib/types.ts';
 
 interface Ctx {
   req: IncomingMessage;
@@ -37,6 +38,8 @@ const SPORT_IDS = SPORTS.map((s) => s.id) as SportId[];
 const LEVEL_IDS = LEVELS.map((l) => l.id) as Level[];
 const RATING_KEYS: RatingKey[] = ['fairPlay', 'teamwork', 'punctuality', 'skill', 'fitness'];
 const API_HEADERS = apiHeaders({ https: config.cookieSecure, turnstile: false });
+
+startEmailNotifications();
 
 /* ---------- Odgovori ---------- */
 
@@ -313,7 +316,12 @@ on('POST', '/api/account/delete', async (ctx) => {
 /* Profil */
 on('POST', '/api/profile', async (ctx) => {
   const userId = await need(ctx);
-  const b = v.shape(ctx.body, 'profil', ['firstName', 'lastName', 'bio', 'sports', 'city', 'lat', 'lng', 'radiusKm', 'completeOnboarding']);
+  const b = v.shape(ctx.body, 'profil', ['firstName', 'lastName', 'bio', 'sports', 'city', 'lat', 'lng', 'radiusKm', 'completeOnboarding', 'emailPrefs']);
+  let emailPrefs: EmailPrefs | undefined;
+  if (b.emailPrefs !== undefined) {
+    const p = v.shape(b.emailPrefs, 'email obavještenja', ['messages', 'sessions', 'nearby']);
+    emailPrefs = Object.fromEntries((['messages', 'sessions', 'nearby'] as const).filter((k) => p[k] !== undefined).map((k) => [k, v.bool(p[k], 'email obavještenja')]));
+  }
   let sports: rules.SportProfileInput[] | undefined;
   if (b.sports !== undefined) {
     sports = v.array(b.sports, 'sportovi', SPORT_IDS.length).map((x) => {
@@ -337,6 +345,7 @@ on('POST', '/api/profile', async (ctx) => {
       lng: hasLoc ? v.lng(b.lng) : undefined,
       radiusKm: b.radiusKm === undefined ? undefined : v.int(b.radiusKm, 'radijus', 1, 50),
       completeOnboarding: b.completeOnboarding === undefined ? false : v.bool(b.completeOnboarding, 'onboarding'),
+      emailPrefs,
   };
   await rateLimit('profile', userId, 60, HOUR);
   await transact((d) => rules.saveProfile(d, userId, input));
@@ -456,7 +465,10 @@ on('POST', '/api/threads/:id/messages', async (ctx) => {
   if (!memoryLimit(`msg:${userId}`, 20, MIN)) throw new ApiError('Šalješ poruke prebrzo. Sačekaj malo.', 429);
   await rateLimit('msg-day', userId, 500, 24 * HOUR);
   const info = await transact((d) => rules.sendMessage(d, userId, ctx.params[0], text, sessionId));
-  if (info.kind === 'direct') afterDirectMessage(ctx.params[0], info.memberIds, userId);
+  if (info.kind === 'direct') {
+    afterDirectMessage(ctx.params[0], info.memberIds, userId);
+    emailDirectMessage(ctx.params[0], userId, info.others, text.trim());
+  }
   withSnapshot(ctx, userId, null);
 });
 on('POST', '/api/threads/:id/read', async (ctx) => {

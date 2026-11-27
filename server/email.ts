@@ -77,7 +77,7 @@ export function emailErrorHint(status: number, body: string, brevoKey = ''): str
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
-function layout(title: string, intro: string, button: string, link: string, outro: string) {
+function layout(title: string, intro: string, button: string, link: string, outro: string, fallbackLink = true) {
   return `<!doctype html><html lang="bs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title></head>
 <body style="margin:0;padding:0;background:#0B0F0D;font-family:Manrope,Segoe UI,Helvetica,Arial,sans-serif;color:#EAF2EC">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0B0F0D;padding:32px 16px"><tr><td align="center">
@@ -86,7 +86,7 @@ function layout(title: string, intro: string, button: string, link: string, outr
 <tr><td style="padding-top:24px;font-size:20px;font-weight:800">${esc(title)}</td></tr>
 <tr><td style="padding-top:12px;font-size:15px;line-height:1.6;color:#B8C7BE">${intro}</td></tr>
 <tr><td style="padding:28px 0"><a href="${esc(link)}" style="display:inline-block;background:#20C45A;color:#04130A;text-decoration:none;font-weight:800;font-size:15px;padding:14px 26px;border-radius:14px">${esc(button)}</a></td></tr>
-<tr><td style="font-size:13px;line-height:1.6;color:#8A9A91">${outro}<br><br>Ako dugme ne radi, kopiraj ovaj link u browser:<br><span style="word-break:break-all;color:#B8C7BE">${esc(link)}</span></td></tr>
+<tr><td style="font-size:13px;line-height:1.6;color:#8A9A91">${outro}${fallbackLink ? `<br><br>Ako dugme ne radi, kopiraj ovaj link u browser:<br><span style="word-break:break-all;color:#B8C7BE">${esc(link)}</span>` : ''}</td></tr>
 </table>
 <p style="font-size:12px;color:#5F6F66;margin-top:16px">FaliJedan · rekreativni sportski termini</p>
 </td></tr></table></body></html>`;
@@ -121,5 +121,37 @@ export function resetPasswordMail(to: string, firstName: string, link: string): 
       'Link važi 30 minuta i može se iskoristiti samo jednom. Nakon promjene lozinke bićeš odjavljen/a sa svih drugih uređaja. Ako nisi ti tražio/la promjenu, ignoriši ovu poruku — lozinka ostaje ista.',
     ),
     text: `Ćao ${firstName}!\n\nZa novu lozinku na FaliJedan otvori ovaj link (važi 30 minuta, jednokratan):\n${link}\n\nAko nisi ti tražio/la promjenu, ignoriši ovu poruku — lozinka ostaje ista.`,
+  };
+}
+
+/* ---------- Obavještenja (pozivi, poruke, termini) ---------- */
+
+const settingsNote = (settingsLink: string) =>
+  `Dobijaš ovaj email jer imaš FaliJedan nalog. Koja obavještenja stižu na email biraš u <a href="${esc(settingsLink)}" style="color:#20C45A">profilu → Uredi profil</a>.`;
+const settingsText = (settingsLink: string) => `Email obavještenja uključuješ i isključuješ u profilu: ${settingsLink}`;
+
+/** Email za obavještenje iz aplikacije (naslov i tekst su isti kao u aplikaciji). */
+export function notificationMail(to: string, firstName: string, n: { title: string; body: string }, link: string, button: string, settingsLink: string): Mail {
+  return {
+    to,
+    toName: firstName,
+    subject: n.title,
+    html: layout(n.title, `Ćao ${esc(firstName)}!<br>${esc(n.body)}`, button, link, settingsNote(settingsLink), false),
+    text: `Ćao ${firstName}!\n\n${n.title}\n${n.body}\n\n${button}: ${link}\n\n${settingsText(settingsLink)}`,
+  };
+}
+
+/** Nova direktna poruka (sa kratkim isječkom teksta). */
+export function messageMail(to: string, firstName: string, fromName: string, text: string, link: string, settingsLink: string): Mail {
+  const preview = text.length > 300 ? `${text.slice(0, 300).trimEnd()}…` : text;
+  const quote = preview
+    ? `<div style="margin-top:14px;padding:12px 16px;border-left:3px solid #20C45A;background:#0F1512;border-radius:10px;color:#EAF2EC">${esc(preview).replace(/\n/g, '<br>')}</div>`
+    : '';
+  return {
+    to,
+    toName: firstName,
+    subject: `Nova poruka od ${fromName}`,
+    html: layout(`${fromName} ti je poslao/la poruku`, `Ćao ${esc(firstName)}!${quote}`, 'Odgovori', link, settingsNote(settingsLink), false),
+    text: `Ćao ${firstName}!\n\n${fromName} ti je poslao/la poruku na FaliJedan${preview ? `:\n\n${preview}` : '.'}\n\nOdgovori: ${link}\n\n${settingsText(settingsLink)}`,
   };
 }

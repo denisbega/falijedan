@@ -13,7 +13,7 @@ import { ORDER_BY, SPECS, assignRows, computeDiff, emptyState, fromRow, newEpoch
 
 const pgType: Record<Kind, string> = { text: 'TEXT', int: 'INTEGER', real: 'DOUBLE PRECISION', bool: 'BOOLEAN', json: 'JSONB' };
 /** Povećaj kad se promijeni struktura tabela (pokreće ponovno izvršavanje DDL-a). */
-const DDL_VERSION = '4';
+const DDL_VERSION = '5';
 
 type Queryable = Pick<pg.PoolClient, 'query'>;
 
@@ -84,6 +84,8 @@ export class PostgresStorage implements StorageAdapter {
     const ddl: string[] = [`CREATE SCHEMA IF NOT EXISTS "${this.s}"`];
     for (const spec of SPECS) {
       ddl.push(`CREATE TABLE IF NOT EXISTS ${this.t(spec.table)} (${spec.cols.map((c) => `"${c.c}" ${pgType[c.k]}`).join(', ')}, PRIMARY KEY (${spec.pk.map((p) => `"${p}"`).join(', ')}))`);
+      // Kolone dodate nakon što je tabela napravljena (CREATE TABLE IF NOT EXISTS ih ne dodaje)
+      ddl.push(`ALTER TABLE ${this.t(spec.table)} ${spec.cols.map((c) => `ADD COLUMN IF NOT EXISTS "${c.c}" ${pgType[c.k]}`).join(', ')}`);
       for (const i of spec.indexes ?? []) ddl.push(`CREATE ${i.unique ? 'UNIQUE ' : ''}INDEX IF NOT EXISTS "${spec.table}_${i.name}" ON ${this.t(spec.table)} (${i.on})`);
     }
     ddl.push(

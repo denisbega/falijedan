@@ -3,7 +3,7 @@
  * Svaka funkcija prima nacrt (draft) baze i ID korisnika koji radi akciju;
  * ako pravilo nije ispunjeno, baca ApiError i transakcija se odbacuje.
  */
-import type { AppNotification, DB, Level, NotificationType, RatingKey, Session, SportId, User } from './types.ts';
+import type { AppNotification, DB, EmailPrefs, Level, NotificationType, RatingKey, Session, SportId, User } from './types.ts';
 import { ANY_POSITION, LEVELS, getSport, isSportId } from './sports.ts';
 import { DEFAULT_CITY } from './cities.ts';
 import { fullName, igraci, relativeDay, timeHM, untilLabel } from './format.ts';
@@ -165,7 +165,7 @@ export interface SportProfileInput {
 export function saveProfile(
   d: DB,
   actorId: string,
-  input: { firstName?: string; lastName?: string; bio?: string; sports?: SportProfileInput[]; city?: string; lat?: number; lng?: number; radiusKm?: number; completeOnboarding?: boolean },
+  input: { firstName?: string; lastName?: string; bio?: string; sports?: SportProfileInput[]; city?: string; lat?: number; lng?: number; radiusKm?: number; completeOnboarding?: boolean; emailPrefs?: EmailPrefs },
 ) {
   const me = requireUser(d, actorId);
   if (input.firstName !== undefined) {
@@ -193,6 +193,7 @@ export function saveProfile(
     me.lng = roundCoord(input.lng);
   }
   if (input.radiusKm != null) me.radiusKm = Math.min(50, Math.max(1, Math.round(input.radiusKm)));
+  if (input.emailPrefs) me.emailPrefs = { ...me.emailPrefs, ...input.emailPrefs };
   if (input.completeOnboarding) {
     if (!d.playerSports.some((p) => p.userId === me.id)) throw new ApiError('Izaberi bar jedan sport.');
     me.onboarded = true;

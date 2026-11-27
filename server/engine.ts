@@ -6,7 +6,7 @@
  * Izmjene se izvršavaju jedna po jedna (red čekanja u procesu + zaključavanje u bazi), pa nema trke
  * za zadnje mjesto u terminu, a keš se mijenja tek kad baza potvrdi upis.
  */
-import type { AdminUser, DB, User } from '../src/lib/types.ts';
+import type { AdminUser, AppNotification, DB, User } from '../src/lib/types.ts';
 import { createSeed, DEMO_USER_ID, rebaseSeed, SEED_VERSION } from '../src/lib/seed.ts';
 import { hasDemoData, purgeDemoData, roundCoord, runScheduledJobs } from '../src/lib/rules.ts';
 import { config, requireVerification } from './config.ts';
@@ -83,17 +83,34 @@ export function ensureFresh(): Promise<void> {
   return freshInflight;
 }
 
+type NotificationListener = (items: AppNotification[]) => void;
+const notificationListeners = new Set<NotificationListener>();
+/** Poziva se sa obavještenjima koja je izmjena napravila — tek kad je upis u bazu potvrđen. */
+export const onNewNotifications = (fn: NotificationListener) => notificationListeners.add(fn);
+
 /** Izmjena pod zaključavanjem. Ako pravilo baci grešku ili upis ne uspije, ništa se ne mijenja. */
 export function transact<T>(fn: (draft: DB) => T): Promise<T> {
   return enqueue(async () => {
+    let created: AppNotification[] = [];
     const out = await storage.mutate(state, (base) => {
       // Druga instanca je u međuvremenu nešto upisala → radimo nad svježim stanjem iz baze
       if (base && base !== state) setState(base, true);
       // base === null → baza je prazna (npr. upravo obrisana); nikad ne vraćamo stari keš u bazu
       const draft = structuredClone(base ?? emptyState(SEED_VERSION, Date.now()));
-      return { next: draft, result: fn(draft) };
+      const known = new Set(draft.notifications.map((n) => n.id));
+      const result = fn(draft);
+      created = draft.notifications.filter((n) => !known.has(n.id));
+      return { next: draft, result };
     });
     setState(out.next, out.changed);
+    if (out.changed && created.length)
+      for (const l of notificationListeners) {
+        try {
+          l(created);
+        } catch (e) {
+          console.error('obavještenja:', e instanceof Error ? e.message : e);
+        }
+      }
     return out.result;
   });
 }
@@ -183,9 +200,9 @@ export function snapshotFor(userId: string): DB {
     seededAt: s.seededAt,
     currentUserId: userId,
     users: s.users.map((u) => {
-      const { passwordHash, email, ...rest } = u;
+      const { passwordHash, email, emailPrefs, ...rest } = u;
       const admin = isAdmin(u) || undefined;
-      if (u.id === userId) return { ...rest, email, admin, hasPassword: !!passwordHash, needsVerification: requireVerification && !u.verified };
+      if (u.id === userId) return { ...rest, email, emailPrefs, admin, hasPassword: !!passwordHash, needsVerification: requireVerification && !u.verified };
       const pub = { ...rest, admin, lat: roundCoord(rest.lat), lng: roundCoord(rest.lng) };
       return email ? pub : { ...pub, bio: undefined, deleted: true };
     }),

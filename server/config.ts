@@ -55,6 +55,11 @@ export const config = {
     resendKey: (process.env.RESEND_API_KEY ?? '').trim(),
     from: (process.env.EMAIL_FROM ?? '').trim(),
     fromName: (process.env.EMAIL_FROM_NAME ?? '').trim() || 'FaliJedan',
+    /**
+     * Najviše email obavještenja (pozivi, poruke, termini) dnevno za cijelu aplikaciju — ostatak dnevne kvote
+     * servisa ostaje za potvrdu naloga i novu lozinku (Brevo besplatno: 300/dan). 0 = obavještenja se ne šalju.
+     */
+    notifyDailyLimit: /^\d+$/.test((process.env.NOTIFY_EMAIL_DAILY_LIMIT ?? '').trim()) ? Number(process.env.NOTIFY_EMAIL_DAILY_LIMIT!.trim()) : 200,
   },
   /**
    * Super admin nalozi (emailovi, odvojeni zarezom): vide, uređuju i brišu sve korisnike, vide sve termine,

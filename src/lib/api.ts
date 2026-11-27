@@ -2,7 +2,7 @@
  * API klijent — svaka akcija ide na server (server/routes.ts), koji provodi pravila
  * i vraća svjež snimak podataka. Komponente koriste samo ove funkcije.
  */
-import type { AdminUser, DB } from './types';
+import type { AdminUser, DB, EmailPrefs } from './types';
 import { store } from './store';
 import type { CreateSessionInput, RatingEntry, SportProfileInput } from './rules';
 
@@ -130,6 +130,7 @@ export const saveProfile = (input: {
   lng?: number;
   radiusKm?: number;
   completeOnboarding?: boolean;
+  emailPrefs?: EmailPrefs;
 }) => call('/api/profile', input);
 
 /* ============================ TERMINI ============================ */

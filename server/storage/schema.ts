@@ -49,6 +49,7 @@ export const SPECS: Spec[] = [
       col('verified', 'verified', 'bool'),
       col('onboarded', 'onboarded', 'bool'),
       col('bio', 'bio'),
+      col('emailPrefs', 'email_prefs', 'json'),
     ],
     indexes: [{ name: 'users_email', on: 'lower(email)', unique: true }],
   },

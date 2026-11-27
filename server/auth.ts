@@ -165,8 +165,12 @@ export async function useEmailToken(token: unknown, purpose: 'verify' | 'reset')
  * Baca 429 kad se pređe `max` pokušaja u prozoru.
  */
 export async function rateLimit(kind: string, value: string, max: number, windowMs: number, message = 'Previše pokušaja. Sačekaj malo pa pokušaj ponovo.') {
-  const count = await db().rateLimit.hit(`${kind}:${sha(`${kind}|${value}`).slice(0, 40)}`, windowMs);
-  if (count > max) throw new ApiError(message, 429);
+  if (!(await underLimit(kind, value, max, windowMs))) throw new ApiError(message, 429);
+}
+
+/** Isto brojanje kao rateLimit, ali bez greške: true = još ima mjesta (i ovaj pokušaj je ubrojan). */
+export async function underLimit(kind: string, value: string, max: number, windowMs: number): Promise<boolean> {
+  return (await db().rateLimit.hit(`${kind}:${sha(`${kind}|${value}`).slice(0, 40)}`, windowMs)) <= max;
 }
 
 /** Jeftino ograničenje u memoriji (zaštita od preopterećenja jedne instance) — bez upita u bazu. */
